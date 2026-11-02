@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Customer Lookup Agent</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --panel: #ffffff; --text: #1d2228; --muted: #5f6b7a; --border: #dde2e8;
+    --accent: #76b900; --accent-ink: #2f4a00; --danger: #c9190b; --danger-bg: #fdecea;
+    --ok: #1e7f3c; --ok-bg: #e7f5ec; --warn-bg: #fff4e5; --warn: #8a5300; --user: #e8f0fe;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #14171b; --panel: #1c2026; --text: #e6e9ed; --muted: #9aa5b1; --border: #2e353e;
+      --accent-ink: #c5ef7a; --danger: #ff8a80; --danger-bg: #3a1f1f; --ok: #7fd99a;
+      --ok-bg: #18301f; --warn-bg: #3a2c12; --warn: #ffcc80; --user: #1f2a3d;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 15px/1.5 system-ui, -apple-system, "Segoe UI", "Red Hat Text", sans-serif; }
+  main { max-width: 880px; margin: 0 auto; padding: 24px 16px 40px; }
+  header h1 { font-size: 1.35rem; margin: 0 0 4px; }
+  header p { margin: 0 0 16px; color: var(--muted); }
+  .bar { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between;
+         background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; }
+  .toggle { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+  .toggle button { border: 0; background: transparent; color: var(--text); padding: 7px 14px; cursor: pointer; font: inherit; }
+  .toggle button[aria-pressed="true"].redacted { background: var(--ok-bg); color: var(--ok); font-weight: 600; }
+  .toggle button[aria-pressed="true"].baseline { background: var(--warn-bg); color: var(--warn); font-weight: 600; }
+  .meta { color: var(--muted); font-size: 0.85rem; }
+  .meta a { color: inherit; }
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 14px 0; }
+  .chips button { border: 1px solid var(--border); background: var(--panel); color: var(--text);
+                  border-radius: 999px; padding: 6px 12px; cursor: pointer; font: inherit; font-size: 0.9rem; }
+  .chips button:hover { border-color: var(--accent); }
+  #log { display: flex; flex-direction: column; gap: 12px; min-height: 160px; }
+  .msg { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 10px 14px; }
+  .msg.user { background: var(--user); align-self: flex-end; max-width: 85%; }
+  .msg .who { font-size: 0.75rem; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin-bottom: 2px; }
+  .tool { display: inline-block; font-size: 0.8rem; border-radius: 6px; padding: 2px 8px; margin: 6px 6px 0 0; }
+  .tool.success { background: var(--ok-bg); color: var(--ok); }
+  .tool.error { background: var(--danger-bg); color: var(--danger); }
+  .msg .foot { font-size: 0.8rem; color: var(--muted); margin-top: 6px; }
+  .msg .foot a { color: inherit; }
+  form { display: flex; gap: 8px; margin-top: 16px; }
+  input[type=text] { flex: 1; min-width: 0; padding: 10px 12px; border-radius: 8px; border: 1px solid var(--border);
+                     background: var(--panel); color: var(--text); font: inherit; }
+  form button { padding: 10px 18px; border-radius: 8px; border: 0; background: var(--accent); color: #102000;
+                font: inherit; font-weight: 600; cursor: pointer; }
+  form button:disabled { opacity: .6; cursor: wait; }
+  .note { margin-top: 18px; font-size: 0.85rem; color: var(--muted); }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Customer Lookup Agent</h1>
+    <p>LangGraph agent &middot; NeMo Relay telemetry &middot; MLflow tracing. Every customer record here is synthetic.</p>
+  </header>
+
+  <div class="bar">
+    <div>
+      <div class="meta" style="margin-bottom:4px">NeMo Relay telemetry policy</div>
+      <div class="toggle" role="group" aria-label="Relay mode">
+        <button class="redacted" data-mode="redacted" aria-pressed="true">Redacted</button>
+        <button class="baseline" data-mode="baseline" aria-pressed="false">Baseline (no redaction)</button>
+      </div>
+    </div>
+    <div class="meta" id="meta">connecting&hellip;</div>
+  </div>
+
+  <div class="chips">
+    <button data-msg="Please look up the customer with SSN 900-12-0001.">Successful lookup</button>
+    <button data-msg="Can you check the account for SSN 900-34-0004?">Lookup that times out</button>
+    <button data-msg="What plan is the customer with SSN 900-12-0002 on?">Another customer</button>
+  </div>
+
+  <div id="log" aria-live="polite"></div>
+
+  <form id="form">
+    <input id="input" type="text" autocomplete="off" placeholder="Ask about a customer, e.g. SSN 900-12-0003" required>
+    <button id="send" type="submit">Send</button>
+  </form>
+
+  <p class="note">The chat shows real values because the support engineer is entitled to them.
+    NeMo Relay redacts only the <em>telemetry</em> exported to MLflow. Open the trace links to compare the two modes.</p>
+</main>
+<script>
+  const state = { mode: "redacted", agents: { redacted: location.origin, baseline: location.origin }, info: {} };
+  const $ = (s) => document.querySelector(s);
+  const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+  async function loadInfo() {
+    try {
+      const own = await (await fetch("/api/info")).json();
+      state.agents = own.agents || state.agents;
+      state.mode = own.relay_mode;
+      await refreshMeta();
+    } catch (e) { $("#meta").textContent = "agent unavailable: " + e; }
+  }
+
+  async function refreshMeta() {
+    document.querySelectorAll(".toggle button").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.mode === state.mode)));
+    try {
+      const info = await (await fetch(state.agents[state.mode] + "/api/info")).json();
+      state.info = info;
+      $("#meta").innerHTML = `model: <b>${esc(info.llm_model)}</b> &middot; MLflow: <a href="${esc(info.mlflow_experiment_url)}" target="_blank" rel="noopener">${esc(info.mlflow_experiment)}</a>`;
+    } catch (e) { $("#meta").textContent = `${state.mode} agent unreachable at ${state.agents[state.mode]}`; }
+  }
+
+  function add(role, html) {
+    const div = document.createElement("div");
+    div.className = "msg " + role;
+    div.innerHTML = html;
+    $("#log").appendChild(div);
+    div.scrollIntoView({ behavior: "smooth", block: "end" });
+    return div;
+  }
+
+  async function send(message) {
+    $("#send").disabled = true;
+    add("user", `<div class="who">you</div>${esc(message)}`);
+    const pending = add("agent", `<div class="who">agent &middot; ${state.mode}</div><span class="meta">thinking&hellip;</span>`);
+    try {
+      const r = await fetch(state.agents[state.mode] + "/api/chat", {
+        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ message }),
+      });
+      const body = await r.json();
+      if (!r.ok) throw new Error(body.detail || r.statusText);
+      const tools = body.tool_calls.map((t) => `<span class="tool ${t.status === "error" ? "error" : "success"}">${esc(t.name)}: ${esc(t.status)}</span>`).join("");
+      pending.innerHTML = `<div class="who">agent &middot; ${esc(body.relay_mode)}</div>${esc(body.reply)}<div>${tools}</div>
+        <div class="foot">${body.duration_ms} ms &middot; <a href="${esc(body.mlflow_trace_url)}" target="_blank" rel="noopener">view trace in MLflow</a></div>`;
+    } catch (e) {
+      pending.innerHTML = `<div class="who">agent</div><span class="tool error">request failed</span> ${esc(e.message)}`;
+    } finally { $("#send").disabled = false; }
+  }
+
+  document.querySelectorAll(".toggle button").forEach((b) => b.addEventListener("click", () => { state.mode = b.dataset.mode; refreshMeta(); }));
+  document.querySelectorAll(".chips button").forEach((b) => b.addEventListener("click", () => send(b.dataset.msg)));
+  $("#form").addEventListener("submit", (e) => { e.preventDefault(); const v = $("#input").value.trim(); if (v) { $("#input").value = ""; send(v); } });
+  loadInfo();
+</script>
+</body>
+</html>

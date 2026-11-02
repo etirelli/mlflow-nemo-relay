@@ -1,0 +1,49 @@
+# NeMo Relay plugin configuration: BASELINE mode (the "before" picture).
+#
+# Same exporters as plugins.redacted.toml, but with NO pii_redaction
+# component. Use it only with synthetic data, to show what leaks into
+# telemetry without Relay's sanitization.
+
+version = 1
+
+[policy]
+unknown_component = "error"
+unknown_field = "error"
+unsupported_value = "error"
+
+[[components]]
+kind = "observability"
+enabled = true
+
+[components.config]
+version = 4
+insecure_http_hosts = ["${MLFLOW_OTLP_HOST}"]
+
+[components.config.opentelemetry]
+enabled = true
+
+[[components.config.opentelemetry.endpoints]]
+type = "openinference"
+endpoint = "${MLFLOW_OTLP_TRACES_ENDPOINT}"
+transport = "http_binary"
+service_name = "customer-lookup-agent"
+service_version = "uc1-community"
+scheduled_delay_millis = 500
+timeout_millis = 10000
+
+[components.config.opentelemetry.endpoints.header_env]
+authorization = "MLFLOW_OTLP_AUTHORIZATION"
+"x-mlflow-experiment-id" = "MLFLOW_OTLP_EXPERIMENT_ID"
+
+[components.config.opentelemetry.endpoints.resource_attributes]
+"demo.use_case" = "uc1"
+"demo.relay_mode" = "baseline"
+
+[components.config.atof]
+enabled = true
+
+[[components.config.atof.sinks]]
+type = "file"
+output_directory = "${RELAY_TELEMETRY_DIR}"
+filename = "atof-baseline.jsonl"
+mode = "append"

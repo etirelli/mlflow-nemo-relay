@@ -1,0 +1,32 @@
+[project]
+name = "customer-lookup-agent"
+version = "0.1.0"
+description = "Use case 1 demo: LangGraph customer lookup agent with NeMo Relay telemetry redaction and MLflow tracing"
+requires-python = ">=3.11"
+license = { text = "Apache-2.0" }
+dependencies = [
+  # NeMo Relay agent runtime with the LangGraph integration (pulls LangChain + LangGraph).
+  "nemo-relay[langgraph]==0.11.0",
+  # OpenAI-compatible chat client (Ollama, vLLM, NVIDIA NIM / build.nvidia.com, OpenAI, ...).
+  "langchain-openai>=1.7,<2",
+  # Client only: resolves experiments and powers the verification script.
+  "mlflow-skinny==3.17.2",
+  "fastapi>=0.115",
+  "uvicorn[standard]>=0.30",
+  "httpx>=0.27",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=8", "pytest-asyncio>=0.24"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/customer_lookup_agent"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["../tests"]

@@ -1,0 +1,23 @@
+# Customer lookup agent (LangGraph + NeMo Relay), UC1 community demo.
+# Build context: demos/uc1-community (so the Relay policy files are included).
+FROM docker.io/library/python:3.12-slim
+
+ENV PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    MLFLOW_DISABLE_AGENT_HINT=1 \
+    RELAY_TELEMETRY_DIR=/app/telemetry
+
+WORKDIR /app
+COPY agent/pyproject.toml agent/pyproject.toml
+COPY agent/src agent/src
+RUN pip install ./agent
+
+COPY relay /app/relay
+RUN useradd --uid 1001 --create-home agent && mkdir -p /app/telemetry && chown -R agent /app/telemetry
+USER 1001
+
+EXPOSE 8000
+HEALTHCHECK --interval=5s --timeout=3s --retries=30 \
+  CMD python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/healthz').status==200 else 1)"
+CMD ["uvicorn", "customer_lookup_agent.app:app", "--host", "0.0.0.0", "--port", "8000"]

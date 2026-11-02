@@ -1,0 +1,139 @@
+# Use case 1, community edition: upstream MLflow + NVIDIA NeMo Relay (OSS).
+#
+#   podman compose up -d --build     (or: docker compose up -d --build)
+#
+# Services
+#   mlflow            MLflow tracking server with basic auth and OTLP ingestion  -> http://localhost:5000
+#   mlflow-bootstrap  one-shot: creates the agent service account, experiments, and permissions
+#   agent-redacted    LangGraph agent, Relay pii_redaction ON  (chat UI)        -> http://localhost:8000
+#   agent-baseline    same agent, Relay redaction OFF (before/after comparison)  -> http://localhost:8001
+#   verify            one-shot (profile "tools"): automated success-criteria checks
+#   ollama            optional local LLM (profile "ollama")
+
+name: uc1-community
+
+x-agent: &agent
+  image: localhost/uc1-customer-lookup-agent:latest
+  depends_on:
+    mlflow-bootstrap:
+      condition: service_completed_successfully
+  extra_hosts:
+    - "host.docker.internal:host-gateway"
+  volumes:
+    - relay-telemetry:/app/telemetry
+  restart: unless-stopped
+
+x-agent-env: &agent-env
+  LLM_PROVIDER: ${LLM_PROVIDER:-openai}
+  LLM_BASE_URL: ${LLM_BASE_URL:-http://host.docker.internal:11434/v1}
+  LLM_MODEL: ${LLM_MODEL:-qwen2.5:7b}
+  LLM_API_KEY: ${LLM_API_KEY:-not-needed}
+  TOOL_TIMEOUT_SECONDS: ${TOOL_TIMEOUT_SECONDS:-2.0}
+  MLFLOW_TRACKING_URI: http://mlflow:5000
+  MLFLOW_PUBLIC_URI: ${MLFLOW_PUBLIC_URI:-http://localhost:5000}
+  # The agent authenticates to MLflow as a least-privilege service account.
+  MLFLOW_TRACKING_USERNAME: ${AGENT_MLFLOW_USERNAME:-relay-agent}
+  MLFLOW_TRACKING_PASSWORD: ${AGENT_MLFLOW_PASSWORD:-relay-agent-demo-password}
+  PUBLIC_REDACTED_AGENT_URL: http://localhost:${REDACTED_AGENT_PORT:-8000}
+  PUBLIC_BASELINE_AGENT_URL: http://localhost:${BASELINE_AGENT_PORT:-8001}
+
+services:
+  mlflow:
+    build:
+      context: ./mlflow
+      dockerfile: Containerfile
+    image: localhost/uc1-mlflow:latest
+    pull_policy: build
+    environment:
+      MLFLOW_AUTH_ADMIN_PASSWORD: ${MLFLOW_ADMIN_PASSWORD:-mlflow-admin-demo-password}
+      MLFLOW_FLASK_SERVER_SECRET_KEY: ${MLFLOW_SECRET_KEY:-uc1-demo-secret-key-change-me}
+      MLFLOW_ALLOWED_HOSTS: "mlflow,mlflow:5000,localhost,localhost:*,127.0.0.1,127.0.0.1:*"
+    ports:
+      - "${MLFLOW_PORT:-5000}:5000"
+    volumes:
+      - mlflow-data:/mlflow/data
+      - mlflow-artifacts:/mlflow/artifacts
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/health')"]
+      interval: 5s
+      timeout: 3s
+      start_period: 60s
+      retries: 40
+    restart: unless-stopped
+
+  mlflow-bootstrap:
+    image: localhost/uc1-mlflow:latest
+    pull_policy: never
+    command: ["python", "/opt/demo/bootstrap.py"]
+    depends_on:
+      mlflow:
+        condition: service_healthy
+    environment:
+      MLFLOW_TRACKING_URI: http://mlflow:5000
+      MLFLOW_TRACKING_USERNAME: admin
+      MLFLOW_TRACKING_PASSWORD: ${MLFLOW_ADMIN_PASSWORD:-mlflow-admin-demo-password}
+      AGENT_MLFLOW_USERNAME: ${AGENT_MLFLOW_USERNAME:-relay-agent}
+      AGENT_MLFLOW_PASSWORD: ${AGENT_MLFLOW_PASSWORD:-relay-agent-demo-password}
+    restart: "no"
+
+  agent-redacted:
+    <<: *agent
+    # Only this service builds the shared agent image; the others reuse it.
+    build:
+      context: .
+      dockerfile: agent/Containerfile
+    pull_policy: build
+    environment:
+      <<: *agent-env
+      RELAY_MODE: redacted
+      RELAY_PLUGINS_FILE: /app/relay/plugins.redacted.toml
+      MLFLOW_EXPERIMENT_NAME: uc1-customer-lookup-redacted
+    ports:
+      - "${REDACTED_AGENT_PORT:-8000}:8000"
+
+  agent-baseline:
+    <<: *agent
+    pull_policy: never
+    environment:
+      <<: *agent-env
+      RELAY_MODE: baseline
+      RELAY_PLUGINS_FILE: /app/relay/plugins.baseline.toml
+      MLFLOW_EXPERIMENT_NAME: uc1-customer-lookup-baseline
+    ports:
+      - "${BASELINE_AGENT_PORT:-8001}:8000"
+
+  # Runs the demo scenarios and the automated checks from inside the network.
+  #   podman compose run --rm verify python -m customer_lookup_agent.scenarios
+  #   podman compose run --rm verify
+  verify:
+    image: localhost/uc1-customer-lookup-agent:latest
+    pull_policy: never
+    profiles: ["tools"]
+    command: ["python", "-m", "customer_lookup_agent.verify"]
+    environment:
+      MLFLOW_TRACKING_URI: http://mlflow:5000
+      MLFLOW_TRACKING_USERNAME: admin
+      MLFLOW_TRACKING_PASSWORD: ${MLFLOW_ADMIN_PASSWORD:-mlflow-admin-demo-password}
+      AGENT_MLFLOW_USERNAME: ${AGENT_MLFLOW_USERNAME:-relay-agent}
+      AGENT_MLFLOW_PASSWORD: ${AGENT_MLFLOW_PASSWORD:-relay-agent-demo-password}
+      DEMO_AGENT_URLS: http://agent-redacted:8000,http://agent-baseline:8000
+    volumes:
+      - relay-telemetry:/app/telemetry:ro
+    restart: "no"
+
+  # Optional in-cluster LLM. On macOS, a native Ollama install is much faster
+  # (containers have no GPU access there). See docs/configuration.md.
+  ollama:
+    image: docker.io/ollama/ollama:0.40.13
+    profiles: ["ollama"]
+    volumes:
+      - ollama-models:/root/.ollama
+    ports:
+      - "11434:11434"
+    restart: unless-stopped
+
+volumes:
+  mlflow-data:
+  mlflow-artifacts:
+  relay-telemetry:
+  ollama-models:
