@@ -1,0 +1,38 @@
+# OpenShell provider profile: NVIDIA hosted models (build.nvidia.com) for the UC1 agent.
+#
+# Optional. Use it instead of the local Ollama LLM:
+#   export NVIDIA_API_KEY=nvapi-...        # on your laptop only
+#   make provider-nvidia                   # lint + import this profile, create the provider
+#   make up LLM=nvidia
+#
+# Why a provider instead of `--env LLM_API_KEY=...`:
+#   * the sandbox only ever sees an opaque placeholder in NVIDIA_API_KEY;
+#   * the OpenShell supervisor substitutes the real key only on requests to
+#     integrate.api.nvidia.com, and only from the listed binary;
+#   * the profile contributes its own network rule, so policy.yaml stays unchanged.
+#
+# Based on the built-in `nvidia` profile (providers/nvidia.yaml in NVIDIA/OpenShell).
+# Built-in profile ids are reserved, so this one has its own id, and it names
+# the Python interpreter of the agent image instead of curl.
+
+id: uc1-nvidia-build
+display_name: NVIDIA build.nvidia.com (UC1 demo)
+description: NVIDIA hosted OpenAI-compatible endpoint for the UC1 customer lookup agent
+category: inference
+inference_capable: true
+credentials:
+  - name: api_key
+    description: NVIDIA API key
+    env_vars: [NVIDIA_API_KEY]
+    required: true
+    auth_style: bearer
+    header_name: authorization
+discovery:
+  credentials: [api_key]
+endpoints:
+  - host: integrate.api.nvidia.com
+    port: 443
+    protocol: rest
+    access: read-write
+    enforcement: enforce
+binaries: [/usr/local/bin/python3.12]

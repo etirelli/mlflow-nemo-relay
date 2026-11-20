@@ -15,12 +15,14 @@ product stack. Each folder runs on its own and has its own documentation.
 | Folder | Use case | Stack | Status |
 |---|---|---|---|
 | [`demos/uc1-community`](demos/uc1-community) | **UC1** Observe tool calls without exposing sensitive inputs | Upstream MLflow 3.17 + NeMo Relay 0.11 (OSS) + LangGraph, on Podman/Docker Compose | ✅ Ready |
+| [`demos/uc1-openshell`](demos/uc1-openshell) | **UC1**, with the agent running in an **NVIDIA OpenShell** sandbox (policy-enforced egress, blocked exfiltration shown in MLflow) | uc1-community + OpenShell 0.1.9 | 🧪 Built; offline tests pass, live sandbox run pending |
 | `demos/uc1-rhoai` | UC1 | MLflow in Red Hat OpenShift AI + NeMo Relay on OpenShift | 🔜 Planned |
 | `demos/uc2-community` | **UC2** Use guardrail decisions to improve agent behavior | Upstream MLflow + NeMo Relay | 🔜 Planned |
 | `demos/uc3-rhoai` | **UC3** Validate guardrail changes before rollout | RHOAI + OpenShift AI Observability + NeMo Relay | 🔜 Planned |
 
 Naming convention: `uc<N>-<stack>`, where `<stack>` is `community` (upstream
-projects only, easiest to package) or `rhoai` (productized Red Hat AI).
+projects only, easiest to package), `openshell` (community stack with the agent
+in an OpenShell sandbox) or `rhoai` (productized Red Hat AI).
 
 ## Quick start (UC1)
 
@@ -42,7 +44,8 @@ Then follow the [UC1 README](demos/uc1-community/README.md) and the
 ├── README.md                 # this file: demo matrix
 ├── docs/use-cases.md         # the three joint use cases, and how the demos map to them
 └── demos/
-    └── uc1-community/        # UC1 on upstream MLflow + NeMo Relay (see its README)
+    ├── uc1-community/        # UC1 on upstream MLflow + NeMo Relay (see its README)
+    └── uc1-openshell/        # UC1 with the agent in an NVIDIA OpenShell sandbox
 ```
 
 All data in these demos is synthetic. The SSNs use the never-issued `900-xx-xxxx` range.

@@ -1,0 +1,83 @@
+# OpenShell sandbox policy for the UC1 customer lookup agent.
+#
+#   openshell policy lint openshell/policy.yaml
+#   openshell sandbox create --policy openshell/policy.yaml ...
+#   openshell policy set <sandbox> --policy openshell/policy.yaml --wait   # live update
+#
+# Layers of control in this demo:
+#   NeMo Relay  -> WHAT the agent's telemetry may contain (SSN redacted before export)
+#   OpenShell   -> WHERE the agent process may connect and WHAT it may touch on disk
+#   MLflow      -> the evidence: tool outcomes, timing, errors (including denials)
+#
+# Everything not listed below is denied. In particular the agent cannot reach
+# the "partner CRM" (partner-crm.example.com), PyPI, or any other internet host,
+# so even a buggy or prompt-injected tool cannot ship customer records out.
+#
+# filesystem_policy, landlock and process apply at sandbox start.
+# network_policies are live: `openshell policy set` / `policy update` hot-reloads them.
+
+version: 1
+
+filesystem_policy:
+  include_workdir: true
+  read_only:
+    - /usr          # Python interpreter and site-packages (agent code, Relay, LangGraph)
+    - /lib
+    - /etc
+    - /app          # Relay telemetry policy files
+    - /proc
+    - /dev/urandom
+    - /var/log
+  read_write:
+    - /sandbox      # workspace; Relay's local ATOF event file lives in /sandbox/telemetry
+    - /tmp          # rendered Relay plugin config
+    - /dev/null
+
+landlock:
+  compatibility: best_effort
+
+network_policies:
+  # MLflow on the laptop, published by compose on port 5000.
+  # L7-enforced: the agent may export traces and resolve its experiment, nothing
+  # else. It cannot read other traces, download models, or call admin APIs.
+  mlflow_tracking:
+    name: mlflow-otlp-export
+    endpoints:
+      - host: host.openshell.internal
+        port: 5000
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow:
+              method: POST
+              path: /v1/traces
+          - allow:
+              method: GET
+              path: /api/2.0/mlflow/experiments/get-by-name
+          - allow:
+              method: POST
+              path: /api/2.0/mlflow/experiments/create
+    binaries:
+      # Scripts run as their interpreter; list the real path, not a symlink.
+      # Relay's exporter runs inside the Python process.
+      - path: /usr/local/bin/python3.12
+
+  # Native Ollama on the laptop (default LLM). Only chat completions.
+  # For build.nvidia.com, attach the provider in openshell/providers/ instead:
+  # the provider contributes its own endpoint rule and injects the API key.
+  local_llm:
+    name: ollama-chat-completions
+    endpoints:
+      - host: host.openshell.internal
+        port: 11434
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow:
+              method: POST
+              path: /v1/chat/completions
+          - allow:
+              method: GET
+              path: /v1/models
+    binaries:
+      - path: /usr/local/bin/python3.12
