@@ -103,22 +103,37 @@ permutation.
 
 ## OpenShell integration status
 
-**Status: 🟡 built against the OpenShell v0.1.9 docs and examples. The offline
-behaviour is validated; the live sandbox run is pending.**
+**Status: ✅ validated end to end on 2026-11-23.** Setup: OpenShell 0.1.9 with
+the Homebrew gateway and the Podman driver (rootless Podman 5, Apple M2, VM
+kernel 6.9.11 with Landlock), native Ollama with `qwen2.5:0.5b`. Result:
+`make demo` passed 16/16.
 
 | Item | Status | Notes |
 |---|---|---|
-| Agent code: blocked egress becomes an ERROR tool span with a readable, redacted reason | ✅ validated offline | `tests/test_sandbox_egress.py` simulates the supervisor's `403 policy_denied` body |
-| Sandbox name exported in telemetry | ✅ validated offline | Root span metadata `demo.sandbox`, plus a resource attribute |
-| Image meets the BYOC requirements (non-root `USER`, `/sandbox`, standard base) | 🟡 by inspection | Follows `examples/bring-your-own-container` |
-| `policy.yaml` passes `openshell policy lint` | ⏳ pending | Needs the CLI (`make lint`) |
-| MLflow reachable from the sandbox at `host.openshell.internal:5000` | ⏳ pending | Needs a live gateway. The macOS host-gateway path through Docker Desktop is unverified. |
-| The MLflow client and Relay exporter use only the three allowed MLflow paths | ⏳ pending | If startup fails, `make deny-log` shows the missing path |
-| Relay's OTLP exporter goes through the supervisor's egress path | ⏳ pending | The exporter runs in the Python process, so the `python3.12` binary rule should match |
-| `sandbox create --detach -- <cmd>` followed by `forward start -d` | ⏳ pending | Flags confirmed in the CLI source; the combination is untested |
-| `openshell logs` denial line format matches the verifier's match | ⏳ pending | The verifier matches the host plus `deni`/`deny` |
-| NVIDIA provider profile: placeholder substitution for the Python client | ⏳ pending | Based on the built-in `nvidia` profile, with the binary changed to Python |
-| Colima as the Docker runtime on macOS | ❓ unknown | OpenShell qualifies Docker Desktop on Apple Silicon. Colima and podman machine depend on VM kernel Landlock support (ABI v3+). |
+| Blocked egress becomes an ERROR tool span with a readable, redacted reason | ✅ live | `EgressBlocked: could not connect to partner-crm.example.com (ConnectError …). The record for SSN [REDACTED-SSN] was not sent.` |
+| Sandbox name exported in telemetry | ✅ live | `demo.sandbox` on the root span |
+| Image meets the BYOC requirements | ✅ live | Runs as uid 1500. The interpreter is `/usr/local/bin/python3.12`, matching the policy. |
+| Policy validates | ✅ | `openshell-prover check --boundary policy.yaml policy.yaml` (see the findings below) |
+| MLflow reachable at `host.openshell.internal:5000` | ✅ live | Podman maps it to `192.168.127.254` (gvproxy), which reaches the Mac's published port |
+| Only the allowed MLflow paths are used | ✅ live | The log shows only `GET …/experiments/get-by-name` and `POST /v1/traces`, both `ALLOWED … engine:l7` |
+| Relay's OTLP exporter goes through the supervisor | ✅ live | Traces arrive, and each export is logged as an allowed L7 request |
+| `sandbox create --detach -- <cmd>` + `forward start -d` | ✅ live | Needs the Makefile fixes below |
+| Denial line format | ✅ live | `NET:OPEN [MED] DENIED /usr/local/bin/python3.12(0) -> partner-crm.example.com:443 [reason:transparent_tcp_policy_denied]` |
+| L7 deny on an allowed host | ✅ live | `POST /api/pull` to Ollama → `403 {"error":"policy_denied","policy":"local_llm","rule":"POST /api/pull",…}` |
+| Ollama bound to loopback only | ✅ live | `OLLAMA_HOST=0.0.0.0` is **not** needed with the Podman machine |
+| NVIDIA provider profile | 🟡 | `provider profile lint` passes. Not run against build.nvidia.com. |
+| Docker Desktop / colima | ❓ | Not tried |
+
+### Issues found and fixed during the live run
+
+| Issue | Fix |
+|---|---|
+| `openshell policy lint` does not exist in 0.1.9. Only provider profiles have `lint`. | `make lint` / `make check` use `openshell-prover check --boundary P P`. It applies the same strict schema (unknown fields are rejected) and exits 2 on an invalid policy. |
+| The compose healthcheck never passed under Podman: the exec-form `python -c "import …; …"` was split on spaces, so the bootstrap never ran | `CMD-SHELL` form (`compose.yaml`). `uc1-community` has the same latent bug. |
+| `openshell forward start -d` keeps the caller's stdout open, so `make sandboxes \| tail` hangs | Redirect the forward's output to `telemetry/forward-<sandbox>.log` |
+| `openshell sandbox delete` is asynchronous and has no `--wait`, so re-creating failed with "already exists" | Poll `sandbox get` until the name is free |
+| `make verify` got a 401: the env vars were set as a prefix to `cd agent`, not to `uv run` | Set the env vars after the `cd` |
+| `qwen2.5:0.5b` skips the second tool call when asked casually ("…and sync the record to the partner CRM") | The CRM prompt names the tool: "…Then call notify_partner_crm with the customer_id and ssn from the result…" It worked 3/3 in testing. |
 
 ### Findings and design notes
 
@@ -161,14 +176,34 @@ behaviour is validated; the live sandbox run is pending.**
   *Suggestion for UC2:* correlate the supervisor's decision with the agent
   span, for example by propagating `traceparent` through the egress proxy, or
   by attaching the denial `reason` to the client-visible error.
-- **The same tool fails differently inside and outside the sandbox.** Outside
-  the sandbox, the CRM call fails with DNS resolution. Inside, it fails with
-  `403 policy_denied`. The tool labels both `EgressBlocked`. Only the sandbox
-  log proves the policy refused it, so `verify.py` checks that log.
+- **A disallowed host is refused at TCP level, without an HTTP body.** OpenShell
+  0.1.9 intercepts transparently. The client gets `ConnectError`/`EACCES`, not
+  the documented `403 policy_denied` JSON, which appears only for L7 denials on
+  allowed hosts. The agent therefore cannot tell a policy denial from a network
+  failure. Only the sandbox log can, which is why `verify.py` checks it.
+  *Suggestion for UC2:* surface a machine-readable denial to the workload, for
+  example a TCP-level signal or a resolvable error endpoint, so agents and
+  MLflow can classify "blocked by policy" separately from "tool failure". The
+  UC2 proposal asks for exactly this distinction.
+- **`openshell logs` keeps a short buffer.** We saw "log buffer contains only
+  the last 36–60 lines". `make evidence` runs right after the scenarios. On a
+  busy sandbox the denial line could scroll out before it is collected.
+  Exporting OCSF events over OTLP (`[openshell.gateway.otlp.ocsf]`) would be
+  the robust option.
+- **OpenShell warns about `--env` credentials.** `sandbox create` prints
+  "MLFLOW_TRACKING_PASSWORD looks like a credential passed as a plain
+  environment variable… use a provider". This confirms the credential note
+  below.
+- **The gateway logs a recurring warning on Podman.** `Compute driver watch
+  stream failed to start … timeout after 60s` repeats about every minute. It
+  had no visible effect: the sandboxes reached `Ready`, and status and logs
+  worked.
 
 ### Next steps
 
-- [ ] Run `make up-scripted && make demo` against a live OpenShell 0.1.9 gateway (Docker Desktop, Apple Silicon), and record the real `openshell logs` denial line in the docs.
-- [ ] Validate colima and podman machine as runtimes. If they work, document the minimum VM kernel.
+- [x] Live run on OpenShell 0.1.9 + Podman (2026-11-23): 16/16.
+- [ ] Validate Docker Desktop and colima as runtimes.
+- [ ] Run the NVIDIA provider against build.nvidia.com, and confirm placeholder substitution for the Python OpenAI client.
+- [ ] Report upstream: no `policy lint` CLI, asynchronous `sandbox delete` without `--wait`, `forward start -d` holding stdout, transparent denials without a client-visible reason.
 - [ ] Try the agent trace relay for the redacted agent only, to compare credential handling.
 - [ ] RHOAI permutation (`uc1-rhoai-openshell`?): OpenShell on OpenShift 4.19+ (Helm chart), MLflow in OpenShift AI over TLS, bearer-token auth.

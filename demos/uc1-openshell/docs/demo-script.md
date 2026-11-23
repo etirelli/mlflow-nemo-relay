@@ -62,7 +62,9 @@ In the chat UI, with **Redacted** selected:
 
 ## 4. Block an exfiltration attempt (60 s)
 
-Click **Sync to partner CRM (blocked by sandbox)**.
+Click **Sync to partner CRM (blocked by sandbox)**. The prompt names the tool
+explicitly, because `qwen2.5:0.5b` skips the second tool call when asked
+casually.
 
 - The agent looks the customer up (green), then calls `notify_partner_crm`.
   It gets an amber chip, **blocked by OpenShell policy**, and the agent says
@@ -71,8 +73,12 @@ Click **Sync to partner CRM (blocked by sandbox)**.
 In the terminal:
 
 ```bash
-make deny-log      # DENIED ... python3.12 -> partner-crm.example.com:443
-make probe         # BLOCKED: https://pypi.org/simple/ ... BLOCKED: https://partner-crm...
+make deny-log
+#  NET:REFUSE [MED] DENIED partner-crm.example.com [reason:policy_dns_ineligible]
+#  NET:OPEN [MED] DENIED /usr/local/bin/python3.12(0) -> partner-crm.example.com:443 [reason:transparent_tcp_policy_denied]
+make probe
+#  BLOCKED: https://pypi.org/simple/ -> ConnectError: [Errno 13] Permission denied
+#  BLOCKED: https://partner-crm.example.com/v1/customers/notify -> ConnectError: [Errno 13] Permission denied
 ```
 
 > "The tool really tried. The agent wasn't trained to refuse; the boundary
@@ -85,9 +91,9 @@ Click **view trace in MLflow** on the CRM reply, or open tab 2.
 
 - **Trace list:** previews read `… SSN [REDACTED-SSN] …`.
 - **CRM trace:** `customer-lookup-request → customer_lookup_agent → tools →
-  notify_partner_crm`, status **ERROR**. The output says `EgressBlocked: … the
-  sandbox egress proxy refused the connection to partner-crm.example.com … The
-  record for SSN [REDACTED-SSN] was not sent.`
+  notify_partner_crm`, status **ERROR**. The output says `EgressBlocked: could
+  not connect to partner-crm.example.com (ConnectError: All connection attempts
+  failed). The record for SSN [REDACTED-SSN] was not sent.`
 - **Root span attributes:** `demo.sandbox = uc1-agent-redacted`.
 - **Timeout trace:** `lookup_customer`, status **ERROR**, about 2,000 ms, and
   still understandable.
@@ -126,6 +132,15 @@ denial, and the egress probe was blocked.
 ---
 
 ## Optional: live policy change (60 s)
+
+Show L7 enforcement on an *allowed* host. The sandbox may call Ollama's chat
+API, but not its model-management API:
+
+```bash
+openshell sandbox exec -n uc1-agent-redacted -- python -c \
+  "import httpx; print(httpx.post('http://host.openshell.internal:11434/api/pull', json={'model':'x'}).text)"
+# {"error":"policy_denied","policy":"local_llm","rule":"POST /api/pull","detail":"POST /api/pull not permitted by policy",...}
+```
 
 Show that network policy hot-reloads without restarting the agent:
 

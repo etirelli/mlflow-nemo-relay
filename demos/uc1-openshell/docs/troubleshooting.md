@@ -25,6 +25,32 @@ version = 2
 compute_driver = "docker"
 ```
 
+## `make lint` / `make check`: `unrecognized subcommand 'lint'`
+
+OpenShell 0.1.9 has no `openshell policy lint`. The Makefile uses the policy
+prover instead (`openshell-prover check --boundary policy.yaml policy.yaml`),
+which Homebrew installs next to the CLI. If it is not on your `PATH`, set
+`OPENSHELL_PROVER=/opt/homebrew/opt/openshell/bin/openshell-prover`.
+
+## `~/.config/openshell/gateway.toml` does not exist
+
+That's normal. The Homebrew service falls back to
+`/opt/homebrew/var/openshell/gateway.toml`, which is nearly empty. Creating
+the user file is safe: the service then uses it instead. Restart the service
+after editing it with `brew services restart openshell`.
+
+## MLflow stays "unhealthy" under Podman and the bootstrap never runs
+
+This happened with an exec-form healthcheck, which Podman splits on spaces
+(the healthcheck log shows `SyntaxError` on `import`). `compose.yaml` now uses
+the `CMD-SHELL` form. Recreate the container with `make infra`.
+
+## `sandbox 'X' already exists` when re-creating
+
+`openshell sandbox delete` returns before the deletion finishes. The Makefile
+waits for the name to become free. If you delete sandboxes by hand, wait for
+`openshell sandbox list` to stop showing them.
+
 ## `sandbox create` fails: image not found
 
 The image must exist in the **gateway's** engine. Build it with the same
@@ -80,9 +106,10 @@ sets, because the forward connects to loopback in the sandbox.
 - `make deny-log` shows a denial to `host.openshell.internal:11434`: the
   binary path in the policy does not match the interpreter. Check it with
   `openshell sandbox exec -n uc1-agent-redacted -- readlink -f $(which python3)`.
-- **Native Ollama** listens on `127.0.0.1` by default. The supervisor
-  reaches the laptop through the host gateway, so start Ollama with
-  `OLLAMA_HOST=0.0.0.0 ollama serve`, or enable "Expose Ollama to the network".
+- **Native Ollama** listens on `127.0.0.1` by default. With the Podman machine
+  that is fine: `host.openshell.internal` resolves to `192.168.127.254` (gvproxy),
+  which reaches the Mac's loopback (validated). Other runtimes may need
+  `OLLAMA_HOST=0.0.0.0 ollama serve`.
 - A different LLM endpoint is denied by design. Add a rule or a provider (see
   [configuration.md](configuration.md#another-openai-compatible-endpoint)).
 
@@ -91,10 +118,17 @@ sets, because the forward connects to loopback in the sandbox.
 - `make deny-log` is empty, but the tool still failed: if the tool error says
   `ConnectError` / `nodename nor servname`, the agent is not running in a
   sandbox (DNS failure on a normal host). Check `sandbox:` in the UI header.
-- A real LLM did not call `notify_partner_crm`. Small models sometimes skip
-  the second tool. Use `qwen2.5:7b` or larger, a hosted model, or `make up-scripted`.
+- A real LLM did not call `notify_partner_crm`. `qwen2.5:0.5b` skips the
+  second tool unless the prompt names it, which is why the scenario and the UI
+  chip say "…Then call notify_partner_crm with the customer_id and ssn…". Typed
+  by hand, a casual "…and sync it to the partner CRM" fails with 0.5b. Use
+  the chip, `qwen2.5:7b`, a hosted model, or `make up-scripted`.
 - The denial log format can differ between OpenShell versions. `verify.py`
   looks for lines that mention `partner-crm.example.com` and `deni`/`deny`.
+  In 0.1.9 the line is `NET:OPEN [MED] DENIED /usr/local/bin/python3.12(0) -> partner-crm.example.com:443 [reason:transparent_tcp_policy_denied]`.
+- `openshell logs` keeps only a short buffer (about 60 lines). If many requests
+  ran after the CRM scenario, the denial may have scrolled out. Run
+  `make scenarios verify` together.
   Run `openshell logs uc1-agent-redacted --since 30m --source sandbox` without
   `--level warn`, which hides policy events.
 

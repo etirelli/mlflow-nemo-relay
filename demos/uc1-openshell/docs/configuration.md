@@ -12,7 +12,7 @@ Select the backend with `make up LLM=<backend>`. The model must support
 
 | `LLM=` | What happens | Sandbox egress |
 |---|---|---|
-| `ollama` (default) | `LLM_BASE_URL=http://host.openshell.internal:11434/v1`, `LLM_MODEL=qwen2.5:7b` | `local_llm` rule in `policy.yaml`: `POST /v1/chat/completions`, `GET /v1/models` |
+| `ollama` (default) | `LLM_BASE_URL=http://host.openshell.internal:11434/v1`, `LLM_MODEL=qwen2.5:7b` (on a 16 GB laptop, set `LLM_MODEL=qwen2.5:0.5b` in `.env`; validated live) | `local_llm` rule in `policy.yaml`: `POST /v1/chat/completions`, `GET /v1/models` |
 | `scripted` | Deterministic stand-in that still emits real Relay LLM spans | none needed |
 | `nvidia` | `https://integrate.api.nvidia.com/v1`, `NVIDIA_MODEL` (default `meta/llama-3.3-70b-instruct`), `--provider uc1-nvidia` | Contributed by the provider profile; the key is injected by the supervisor |
 
@@ -59,7 +59,7 @@ in [architecture.md](architecture.md#policy-rule-by-rule).
 Useful commands:
 
 ```bash
-openshell policy lint openshell/policy.yaml     # offline schema check (also: make lint)
+make lint                                       # offline schema check (openshell-prover; 0.1.9 has no `policy lint`)
 make policy-show                                # effective policy (base + provider rules)
 openshell policy list uc1-agent-redacted        # revision history
 make deny-log                                   # what was denied, by which binary

@@ -13,6 +13,10 @@ export
 ENGINE ?= $(shell if docker info >/dev/null 2>&1; then echo docker; elif command -v podman >/dev/null 2>&1; then echo podman; else echo docker; fi)
 COMPOSE ?= $(ENGINE) compose
 OPENSHELL ?= openshell
+# OpenShell 0.1.9 has no `policy lint`. The policy prover parses the policy with the
+# same strict schema (unknown fields are rejected), so checking the policy against
+# itself as the boundary works as a linter.
+OPENSHELL_PROVER ?= $(or $(shell command -v openshell-prover 2>/dev/null),/opt/homebrew/opt/openshell/bin/openshell-prover)
 
 # Podman needs a fully qualified local image reference.
 AGENT_IMAGE ?= $(if $(filter podman,$(ENGINE)),localhost/,)uc1-openshell-agent:latest
@@ -58,6 +62,9 @@ UV_RUN := cd agent && uv run --quiet
 define create_sandbox
 	-@$(OPENSHELL) forward stop $(3) $(1) >/dev/null 2>&1
 	-@$(OPENSHELL) sandbox delete $(1) >/dev/null 2>&1
+	@# Deletion is asynchronous (no --wait flag in 0.1.9): wait until the name is free.
+	@for i in $$(seq 1 60); do $(OPENSHELL) sandbox get $(1) >/dev/null 2>&1 || exit 0; sleep 1; done; \
+	  echo "sandbox $(1) still exists after 60s"; exit 1
 	$(OPENSHELL) sandbox create --name $(1) --from $(AGENT_IMAGE) --policy $(POLICY) --detach \
 	  $(LLM_ENV) \
 	  --env SANDBOX_NAME=$(1) \
@@ -72,7 +79,9 @@ define create_sandbox
 	  --env PUBLIC_REDACTED_AGENT_URL=http://localhost:$(REDACTED_AGENT_PORT) \
 	  --env PUBLIC_BASELINE_AGENT_URL=http://localhost:$(BASELINE_AGENT_PORT) \
 	  -- uvicorn customer_lookup_agent.app:app --host 127.0.0.1 --port $(3)
-	$(OPENSHELL) forward start $(3) $(1) -d
+	@mkdir -p $(EVIDENCE_DIR)
+	@# The detached forward inherits stdout/stderr; redirect so it does not hold the caller's pipe open.
+	$(OPENSHELL) forward start $(3) $(1) -d </dev/null >$(EVIDENCE_DIR)/forward-$(1).log 2>&1
 endef
 
 # $(call wait_agent,<port>)
@@ -90,7 +99,7 @@ help: ## Show targets
 
 check: ## Check the OpenShell gateway and lint the sandbox policy
 	$(OPENSHELL) status
-	$(OPENSHELL) policy lint $(POLICY)
+	$(OPENSHELL_PROVER) check --boundary $(POLICY) $(POLICY)
 
 infra: ## Start MLflow (compose) and run its one-shot bootstrap
 	$(COMPOSE) up -d --build mlflow
@@ -140,10 +149,10 @@ evidence: ## Collect sandbox evidence into ./telemetry (ATOF files, OpenShell lo
 	@echo "evidence in $(EVIDENCE_DIR)"; ls -1 $(EVIDENCE_DIR)
 
 verify: evidence ## Check the success criteria against MLflow and the sandbox evidence
-	MLFLOW_TRACKING_URI=http://localhost:$(MLFLOW_PORT) \
-	MLFLOW_TRACKING_USERNAME=admin MLFLOW_TRACKING_PASSWORD=$(MLFLOW_ADMIN_PASSWORD) \
-	EVIDENCE_DIR=$(EVIDENCE_DIR) REDACTED_SANDBOX=$(REDACTED_SANDBOX) \
-	$(UV_RUN) python -m customer_lookup_agent.verify
+	cd agent && MLFLOW_TRACKING_URI=http://localhost:$(MLFLOW_PORT) \
+	  MLFLOW_TRACKING_USERNAME=admin MLFLOW_TRACKING_PASSWORD=$(MLFLOW_ADMIN_PASSWORD) \
+	  EVIDENCE_DIR=$(EVIDENCE_DIR) REDACTED_SANDBOX=$(REDACTED_SANDBOX) MLFLOW_DISABLE_AGENT_HINT=1 \
+	  uv run --quiet python -m customer_lookup_agent.verify
 
 demo: scenarios verify ## Run the scenarios, then verify
 
@@ -185,5 +194,5 @@ test: ## Run the offline test suite (no containers or sandbox needed; uses uv)
 	cd agent && uv run --extra test pytest -q
 
 lint: ## Lint the OpenShell policy and the provider profile (needs the openshell CLI only)
-	$(OPENSHELL) policy lint $(POLICY)
+	$(OPENSHELL_PROVER) check --boundary $(POLICY) $(POLICY)
 	$(OPENSHELL) provider profile lint -f openshell/providers/nvidia-build.yaml

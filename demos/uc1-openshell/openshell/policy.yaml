@@ -1,6 +1,6 @@
 # OpenShell sandbox policy for the UC1 customer lookup agent.
 #
-#   openshell policy lint openshell/policy.yaml
+#   make lint     # openshell-prover check; OpenShell 0.1.9 has no `policy lint`
 #   openshell sandbox create --policy openshell/policy.yaml ...
 #   openshell policy set <sandbox> --policy openshell/policy.yaml --wait   # live update
 #

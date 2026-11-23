@@ -15,7 +15,7 @@ product stack. Each folder runs on its own and has its own documentation.
 | Folder | Use case | Stack | Status |
 |---|---|---|---|
 | [`demos/uc1-community`](demos/uc1-community) | **UC1** Observe tool calls without exposing sensitive inputs | Upstream MLflow 3.17 + NeMo Relay 0.11 (OSS) + LangGraph, on Podman/Docker Compose | ✅ Ready |
-| [`demos/uc1-openshell`](demos/uc1-openshell) | **UC1**, with the agent running in an **NVIDIA OpenShell** sandbox (policy-enforced egress, blocked exfiltration shown in MLflow) | uc1-community + OpenShell 0.1.9 | 🧪 Built; offline tests pass, live sandbox run pending |
+| [`demos/uc1-openshell`](demos/uc1-openshell) | **UC1**, with the agent running in an **NVIDIA OpenShell** sandbox (policy-enforced egress, blocked exfiltration shown in MLflow) | uc1-community + OpenShell 0.1.9 (Podman) | ✅ Ready (validated live 2026-11-23, 16/16) |
 | `demos/uc1-rhoai` | UC1 | MLflow in Red Hat OpenShift AI + NeMo Relay on OpenShift | 🔜 Planned |
 | `demos/uc2-community` | **UC2** Use guardrail decisions to improve agent behavior | Upstream MLflow + NeMo Relay | 🔜 Planned |
 | `demos/uc3-rhoai` | **UC3** Validate guardrail changes before rollout | RHOAI + OpenShift AI Observability + NeMo Relay | 🔜 Planned |

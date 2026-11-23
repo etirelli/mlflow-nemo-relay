@@ -54,9 +54,15 @@ agent runs, and a trusted **supervisor**:
   only way out is the mediated channel to the supervisor. The supervisor
   resolves DNS, checks each connection against the policy (binary + host +
   port, and for `protocol: rest` endpoints also method + path), and opens
-  approved connections. A denied plain-HTTP request gets a `403` JSON body
-  with `"error": "policy_denied"`. A denied HTTPS `CONNECT` gets a `403`
-  from the proxy. Every denial is logged with destination, binary and reason.
+  approved connections. Observed with OpenShell 0.1.9 on Podman:
+  - A connection to a host that no rule allows is refused at TCP level. The
+    client sees `ConnectError` (`EACCES`), and the sandbox log records
+    `NET:OPEN [MED] DENIED /usr/local/bin/python3.12(0) -> partner-crm.example.com:443 [reason:transparent_tcp_policy_denied]`.
+  - A request to an allowed host but a disallowed method or path gets an HTTP
+    `403` with a JSON body, for example
+    `{"error":"policy_denied","policy":"local_llm","rule":"POST /api/pull",…}`.
+  - Allowed requests are logged as well, for example
+    `HTTP:POST [INFO] ALLOWED POST http://host.openshell.internal:5000/v1/traces [policy:mlflow_tracking engine:l7]`.
 - **Binary identity.** Rules name the executable that opens the connection.
   Scripts run as their interpreter, so the policy lists
   `/usr/local/bin/python3.12`, the real path in `python:3.12-slim`. Relay's
@@ -93,7 +99,7 @@ customer-lookup-request            AGENT   demo.sandbox = uc1-agent-redacted
     ├── model → <model>            LLM
     ├── tools → lookup_customer    TOOL    OK, ~200 ms   (or ERROR, ~2,000 ms timeout)
     ├── model → <model>            LLM
-    ├── tools → notify_partner_crm TOOL    ERROR  "EgressBlocked: … partner-crm.example.com … SSN [REDACTED-SSN] was not sent"
+    ├── tools → notify_partner_crm TOOL    ERROR  "EgressBlocked: could not connect to partner-crm.example.com (ConnectError …). The record for SSN [REDACTED-SSN] was not sent."
     └── model → <model>            LLM
 ```
 

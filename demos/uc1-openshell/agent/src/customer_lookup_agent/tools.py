@@ -79,13 +79,17 @@ async def notify_partner_crm(customer_id: str, ssn: str) -> dict:
         async with httpx.AsyncClient(timeout=settings.partner_crm_timeout_seconds) as client:
             response = await client.post(url, json=payload)
     except httpx.ProxyError as exc:
-        # HTTPS through the OpenShell supervisor: a denied CONNECT surfaces here (403).
+        # An explicit egress proxy refused CONNECT (403). Not how OpenShell 0.1.9 behaves
+        # on Podman, which intercepts transparently (next branch), but kept for proxies.
         raise ToolException(
             f"{EGRESS_BLOCKED}: the sandbox egress proxy refused the connection to {target} "
             f"({exc}). OpenShell policy does not allow this destination. "
             f"The record for SSN {ssn} was not sent."
         ) from exc
     except httpx.TransportError as exc:
+        # OpenShell 0.1.9 (observed on Podman): the supervisor intercepts the connection
+        # transparently and refuses it, so the client sees a ConnectError / EACCES. The
+        # sandbox log records `DENIED ... [reason:transparent_tcp_policy_denied]`.
         raise ToolException(
             f"{EGRESS_BLOCKED}: could not connect to {target} ({type(exc).__name__}: {exc}). "
             f"The record for SSN {ssn} was not sent."

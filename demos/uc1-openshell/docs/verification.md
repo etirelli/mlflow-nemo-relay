@@ -49,7 +49,7 @@ in its error is redacted.
 `make scenarios`. The API response returns the real customer record, which
 proves the tool received the original SSN.
 
-Expected output (illustrative: the OpenShell section has not yet run against a live gateway):
+Output from the live run (2026-11-23, OpenShell 0.1.9 + Podman, `qwen2.5:0.5b`):
 
 ```
 Redacted experiment: uc1-openshell-redacted
@@ -71,8 +71,12 @@ Baseline experiment (control, no redaction): uc1-openshell-baseline
 OpenShell sandbox: uc1-agent-redacted
   [PASS] Traces were produced inside the OpenShell sandbox (demo.sandbox attribute)
   [PASS] MLflow shows the blocked partner CRM sync as an ERROR tool span with the denial reason
+         "EgressBlocked: could not connect to partner-crm.example.com (ConnectError: All connection attempts failed). The record for SSN [REDACTED-SSN] was not sent."
   [PASS] The OpenShell sandbox log records the denied connection to the partner CRM
+         [1795463709.695] [sandbox] [OCSF ] [ocsf] NET:REFUSE [MED] DENIED partner-crm.example.com [reason:policy_dns_ineligible]
   [PASS] A process inside the sandbox cannot reach the internet (egress probe)
+         BLOCKED: https://pypi.org/simple/ -> ConnectError: [Errno 13] Permission denied
+         BLOCKED: https://partner-crm.example.com/v1/customers/notify -> ConnectError: [Errno 13] Permission denied
 Authenticated routing
   [PASS] OTLP export without credentials is rejected
   [PASS] The agent's service account cannot write to an experiment it was not granted

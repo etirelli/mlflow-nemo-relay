@@ -18,12 +18,12 @@ LangGraph agent runs inside an **NVIDIA OpenShell** sandbox.
 | [MLflow](https://github.com/mlflow/mlflow) | 3.17.2 | Tracking server with basic auth and OTLP trace ingestion (`/v1/traces`), run in compose outside the sandbox |
 | Any OpenAI-compatible LLM | — | Native Ollama (default), build.nvidia.com through an OpenShell provider, or the built-in scripted model |
 
-> **Status:** the agent code, the Relay policies and the offline tests are
-> validated (`make test`: 8 passed). The OpenShell wiring (image, policy,
-> Makefile) follows the OpenShell v0.1.9 docs and examples, but **it has not
-> yet run end to end against a live gateway**. See
-> [docs/product-gaps.md](docs/product-gaps.md#openshell-integration-status)
-> for the open validation items.
+> **Status:** validated end to end on 2026-11-23. Setup: OpenShell 0.1.9 with
+> the Homebrew gateway and the Podman driver (rootless Podman 5, Apple M2, VM
+> kernel 6.9), native Ollama with `qwen2.5:0.5b`. Result: `make demo` passes
+> 16/16, and `make test` passes 8 offline tests. Docker Desktop and colima
+> have not been tried. See
+> [docs/product-gaps.md](docs/product-gaps.md#openshell-integration-status).
 
 ## What the demo shows
 
@@ -56,8 +56,10 @@ Prerequisites:
 - **OpenShell 0.1.9** with a running gateway. On macOS, install it with
   `curl -LsSf https://raw.githubusercontent.com/NVIDIA/OpenShell/main/install.sh | sh`,
   which sets up a Homebrew service. Check it with `openshell status`.
-- **Docker** (Docker Desktop is the macOS runtime that OpenShell qualifies) or
-  **Podman 5**. It must be the same engine the gateway uses.
+- **Podman 5** (validated: give the machine 4 GiB, `podman machine set --memory 4096`)
+  or **Docker** (Docker Desktop is the macOS runtime OpenShell qualifies; not tried
+  here). It must be the same engine the gateway uses; pin it with
+  `compute_driver` in `~/.config/openshell/gateway.toml`.
 - **uv**, for scenarios, verify and tests.
 - Optionally, a local LLM.
 
@@ -67,7 +69,8 @@ cp .env.example .env              # optional
 
 # Option A: real LLM through native Ollama on your laptop
 ollama pull qwen2.5:7b
-make up
+make up                            # with Podman: make up ENGINE=podman
+# Low-memory laptop (16 GB): ollama pull qwen2.5:0.5b and set LLM_MODEL=qwen2.5:0.5b in .env
 
 # Option B: no LLM at all (deterministic scripted model, good for rehearsals)
 make up-scripted
