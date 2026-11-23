@@ -1,0 +1,61 @@
+# NeMo Relay plugin configuration: BASELINE mode (the "before" picture).
+#
+# Same exporters as plugins.redacted.toml, but with NO pii_redaction
+# component. Use it only with synthetic data, to show what leaks into
+# telemetry without Relay's sanitization.
+
+version = 1
+
+[policy]
+unknown_component = "error"
+unknown_field = "error"
+unsupported_value = "error"
+
+[[components]]
+kind = "observability"
+enabled = true
+
+[components.config]
+version = 4
+
+[components.config.opentelemetry]
+enabled = true
+
+[[components.config.opentelemetry.endpoints]]
+type = "openinference"
+endpoint = "${MLFLOW_OTLP_TRACES_ENDPOINT}"
+transport = "http_binary"
+service_name = "customer-lookup-agent"
+service_version = "uc1-rhoai"
+scheduled_delay_millis = 500
+timeout_millis = 10000
+
+# Trust the CA that signs MLflow's certificate (OpenShift service CA), when set.
+# begin-optional: MLFLOW_OTLP_CA_CERT
+[components.config.opentelemetry.endpoints.tls]
+certificate = "${MLFLOW_OTLP_CA_CERT}"
+# end-optional
+
+# Authorization: "Bearer <service account token>", read from a file that the
+# agent refreshes from the pod's rotating token (Relay re-reads header_file).
+[components.config.opentelemetry.endpoints.header_file]
+authorization = "${MLFLOW_OTLP_AUTH_HEADER_FILE}"
+
+# Routing: the MLflow workspace (= namespace) and the experiment for the traces.
+[components.config.opentelemetry.endpoints.header_env]
+"x-mlflow-workspace" = "MLFLOW_OTLP_WORKSPACE"
+"x-mlflow-experiment-id" = "MLFLOW_OTLP_EXPERIMENT_ID"
+
+[components.config.opentelemetry.endpoints.resource_attributes]
+"demo.use_case" = "uc1"
+"demo.platform" = "openshift-ai"
+"demo.relay_mode" = "baseline"
+
+[components.config.atof]
+enabled = true
+
+[[components.config.atof.sinks]]
+type = "file"
+output_directory = "${RELAY_TELEMETRY_DIR}"
+filename = "atof-baseline.jsonl"
+mode = "append"

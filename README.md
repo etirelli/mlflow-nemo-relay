@@ -16,7 +16,7 @@ product stack. Each folder runs on its own and has its own documentation.
 |---|---|---|---|
 | [`demos/uc1-community`](demos/uc1-community) | **UC1** Observe tool calls without exposing sensitive inputs | Upstream MLflow 3.17 + NeMo Relay 0.11 (OSS) + LangGraph, on Podman/Docker Compose | ✅ Ready |
 | [`demos/uc1-openshell`](demos/uc1-openshell) | **UC1**, with the agent running in an **NVIDIA OpenShell** sandbox (policy-enforced egress, blocked exfiltration shown in MLflow) | uc1-community + OpenShell 0.1.9 (Podman) | ✅ Ready (validated live 2026-11-23, 16/16) |
-| `demos/uc1-rhoai` | UC1 | MLflow in Red Hat OpenShift AI + NeMo Relay on OpenShift | 🔜 Planned |
+| [`demos/uc1-rhoai`](demos/uc1-rhoai) | **UC1** on Red Hat OpenShift AI: per-project MLflow workspace, service-account auth with least-privilege RBAC, TLS | MLflow in OpenShift AI 3.6 + NeMo Relay 0.11 on OpenShift 4.22; any OpenAI-compatible LLM (configured locally) | ✅ Ready (validated live 2026-11-23, 12/12) |
 | `demos/uc2-community` | **UC2** Use guardrail decisions to improve agent behavior | Upstream MLflow + NeMo Relay | 🔜 Planned |
 | `demos/uc3-rhoai` | **UC3** Validate guardrail changes before rollout | RHOAI + OpenShift AI Observability + NeMo Relay | 🔜 Planned |
 
@@ -45,7 +45,8 @@ Then follow the [UC1 README](demos/uc1-community/README.md) and the
 ├── docs/use-cases.md         # the three joint use cases, and how the demos map to them
 └── demos/
     ├── uc1-community/        # UC1 on upstream MLflow + NeMo Relay (see its README)
-    └── uc1-openshell/        # UC1 with the agent in an NVIDIA OpenShell sandbox
+    ├── uc1-openshell/        # UC1 with the agent in an NVIDIA OpenShell sandbox
+    └── uc1-rhoai/            # UC1 on Red Hat OpenShift AI (MLflow workspaces, Kubernetes auth)
 ```
 
 All data in these demos is synthetic. The SSNs use the never-issued `900-xx-xxxx` range.

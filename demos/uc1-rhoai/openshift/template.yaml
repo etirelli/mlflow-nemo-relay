@@ -1,0 +1,261 @@
+# UC1 on Red Hat OpenShift AI: customer lookup agent (LangGraph + NeMo Relay) -> MLflow in OpenShift AI.
+#
+# Nothing cluster-specific lives here: every endpoint, model and secret name is a
+# parameter, supplied from your local config.env (see config.env.example):
+#
+#   oc process -f openshift/template.yaml --param-file=config.env | oc apply -n <namespace> -f -
+#
+# The Makefile does this for you (`make deploy`).
+apiVersion: template.openshift.io/v1
+kind: Template
+metadata:
+  name: uc1-rhoai-customer-lookup
+  annotations:
+    description: >-
+      UC1 demo: observe agent tool calls in MLflow (OpenShift AI) without exposing
+      sensitive inputs, using NVIDIA NeMo Relay telemetry redaction.
+    tags: mlflow,nemo-relay,langgraph,demo
+parameters:
+  - name: NAMESPACE
+    description: Namespace (project) for the demo. It is also the MLflow workspace.
+    required: true
+  - name: LLM_BASE_URL
+    description: OpenAI-compatible base URL of the LLM, e.g. https://host/v1
+    required: true
+  - name: LLM_MODEL
+    description: Model id as listed by GET <LLM_BASE_URL>/models
+    required: true
+  - name: LLM_API_KEY_SECRET
+    description: Name of an existing Secret in NAMESPACE that holds the LLM API key
+    required: true
+  - name: LLM_API_KEY_SECRET_KEY
+    description: Key inside that Secret
+    value: api-key
+  - name: LLM_PROVIDER
+    description: "'openai' (any OpenAI-compatible endpoint) or 'scripted' (no LLM)"
+    value: openai
+  - name: MLFLOW_TRACKING_URI
+    description: MLflow as seen from inside the cluster (OpenShift AI service, with the /mlflow prefix)
+    value: https://mlflow.redhat-ods-applications.svc:8443/mlflow
+  - name: MLFLOW_OTLP_ENDPOINT
+    description: >-
+      MLflow OTLP trace endpoint. Empty = derived from MLFLOW_TRACKING_URI's scheme and host
+      plus /v1/traces (the OTLP route is not under the /mlflow prefix).
+    value: ""
+  - name: MLFLOW_PUBLIC_URI
+    description: Browser-facing MLflow URL (OpenShift AI gateway), used for links in the chat UI
+    required: true
+  - name: REDACTED_EXPERIMENT
+    value: uc1-rhoai-redacted
+  - name: BASELINE_EXPERIMENT
+    value: uc1-rhoai-baseline
+  - name: TOOL_TIMEOUT_SECONDS
+    value: "2.0"
+  - name: REDACTED_LOCAL_PORT
+    description: Local port of `make port-forward` for the redacted agent (chat UI toggle)
+    value: "8000"
+  - name: BASELINE_LOCAL_PORT
+    value: "8001"
+
+objects:
+  # --- Identity and least-privilege access to MLflow ---------------------------------------
+  - apiVersion: v1
+    kind: ServiceAccount
+    metadata:
+      name: uc1-agent
+      labels: {app.kubernetes.io/part-of: uc1-rhoai}
+
+  # MLflow in OpenShift AI authorizes each request with a SelfSubjectAccessReview on
+  # experiments.mlflow.kubeflow.org in the workspace (namespace). The agent may read and
+  # write traces to its two experiments only: no create, no list, no other experiments.
+  - apiVersion: rbac.authorization.k8s.io/v1
+    kind: Role
+    metadata:
+      name: uc1-trace-writer
+      labels: {app.kubernetes.io/part-of: uc1-rhoai}
+    rules:
+      - apiGroups: ["mlflow.kubeflow.org"]
+        resources: ["experiments"]
+        verbs: ["get", "update"]
+        resourceNames: ["${REDACTED_EXPERIMENT}", "${BASELINE_EXPERIMENT}"]
+
+  - apiVersion: rbac.authorization.k8s.io/v1
+    kind: RoleBinding
+    metadata:
+      name: uc1-trace-writer
+      labels: {app.kubernetes.io/part-of: uc1-rhoai}
+    roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: uc1-trace-writer}
+    subjects:
+      - {kind: ServiceAccount, name: uc1-agent, namespace: "${NAMESPACE}"}
+
+  # OpenShift injects the service CA bundle (signs mlflow.redhat-ods-applications.svc).
+  - apiVersion: v1
+    kind: ConfigMap
+    metadata:
+      name: uc1-service-ca
+      labels: {app.kubernetes.io/part-of: uc1-rhoai}
+      annotations:
+        service.beta.openshift.io/inject-cabundle: "true"
+
+  # --- LLM configuration (non-secret) --------------------------------------------------------
+  - apiVersion: v1
+    kind: ConfigMap
+    metadata:
+      name: uc1-llm
+      labels: {app.kubernetes.io/part-of: uc1-rhoai}
+    data:
+      LLM_PROVIDER: "${LLM_PROVIDER}"
+      LLM_BASE_URL: "${LLM_BASE_URL}"
+      LLM_MODEL: "${LLM_MODEL}"
+
+  # --- In-cluster image build (no external registry) -----------------------------------------
+  - apiVersion: image.openshift.io/v1
+    kind: ImageStream
+    metadata:
+      name: uc1-agent
+      labels: {app.kubernetes.io/part-of: uc1-rhoai}
+
+  - apiVersion: build.openshift.io/v1
+    kind: BuildConfig
+    metadata:
+      name: uc1-agent
+      labels: {app.kubernetes.io/part-of: uc1-rhoai}
+    spec:
+      source: {type: Binary}
+      strategy:
+        type: Docker
+        dockerStrategy: {dockerfilePath: agent/Containerfile}
+      output:
+        to: {kind: ImageStreamTag, name: "uc1-agent:latest"}
+      resources:
+        requests: {cpu: 500m, memory: 1Gi}
+        limits: {memory: 2Gi}
+
+  # --- Agents: same image, differ only in the Relay policy and the experiment ----------------
+  - apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: uc1-agent-redacted
+      labels: {app: uc1-agent-redacted, app.kubernetes.io/part-of: uc1-rhoai}
+    spec:
+      replicas: 1
+      selector: {matchLabels: {app: uc1-agent-redacted}}
+      template:
+        metadata:
+          labels: {app: uc1-agent-redacted, app.kubernetes.io/part-of: uc1-rhoai}
+        spec:
+          serviceAccountName: uc1-agent
+          containers:
+            - name: agent
+              image: "image-registry.openshift-image-registry.svc:5000/${NAMESPACE}/uc1-agent:latest"
+              imagePullPolicy: Always
+              ports: [{containerPort: 8000, name: http}]
+              envFrom: [{configMapRef: {name: uc1-llm}}]
+              env:
+                - name: LLM_API_KEY
+                  valueFrom: {secretKeyRef: {name: "${LLM_API_KEY_SECRET}", key: "${LLM_API_KEY_SECRET_KEY}"}}
+                - {name: RELAY_MODE, value: redacted}
+                - {name: RELAY_PLUGINS_FILE, value: /app/relay/plugins.redacted.toml}
+                - {name: MLFLOW_EXPERIMENT_NAME, value: "${REDACTED_EXPERIMENT}"}
+                - {name: MLFLOW_TRACKING_URI, value: "${MLFLOW_TRACKING_URI}"}
+                - {name: MLFLOW_OTLP_ENDPOINT, value: "${MLFLOW_OTLP_ENDPOINT}"}
+                - {name: MLFLOW_PUBLIC_URI, value: "${MLFLOW_PUBLIC_URI}"}
+                - {name: MLFLOW_WORKSPACE, value: "${NAMESPACE}"}
+                - {name: MLFLOW_TRACKING_TOKEN_FILE, value: /var/run/secrets/kubernetes.io/serviceaccount/token}
+                - {name: MLFLOW_TRACKING_SERVER_CERT_PATH, value: /etc/uc1/service-ca/service-ca.crt}
+                - {name: TOOL_TIMEOUT_SECONDS, value: "${TOOL_TIMEOUT_SECONDS}"}
+                - {name: PUBLIC_REDACTED_AGENT_URL, value: "http://localhost:${REDACTED_LOCAL_PORT}"}
+                - {name: PUBLIC_BASELINE_AGENT_URL, value: "http://localhost:${BASELINE_LOCAL_PORT}"}
+              volumeMounts:
+                - {name: service-ca, mountPath: /etc/uc1/service-ca, readOnly: true}
+                - {name: telemetry, mountPath: /app/telemetry}
+              readinessProbe:
+                httpGet: {path: /healthz, port: http}
+                periodSeconds: 5
+                failureThreshold: 60
+              resources:
+                requests: {cpu: 100m, memory: 384Mi}
+                limits: {memory: 1Gi}
+              securityContext:
+                allowPrivilegeEscalation: false
+                runAsNonRoot: true
+                capabilities: {drop: [ALL]}
+                seccompProfile: {type: RuntimeDefault}
+          volumes:
+            - name: service-ca
+              configMap: {name: uc1-service-ca}
+            - name: telemetry
+              emptyDir: {}
+
+  - apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: uc1-agent-baseline
+      labels: {app: uc1-agent-baseline, app.kubernetes.io/part-of: uc1-rhoai}
+    spec:
+      replicas: 1
+      selector: {matchLabels: {app: uc1-agent-baseline}}
+      template:
+        metadata:
+          labels: {app: uc1-agent-baseline, app.kubernetes.io/part-of: uc1-rhoai}
+        spec:
+          serviceAccountName: uc1-agent
+          containers:
+            - name: agent
+              image: "image-registry.openshift-image-registry.svc:5000/${NAMESPACE}/uc1-agent:latest"
+              imagePullPolicy: Always
+              ports: [{containerPort: 8000, name: http}]
+              envFrom: [{configMapRef: {name: uc1-llm}}]
+              env:
+                - name: LLM_API_KEY
+                  valueFrom: {secretKeyRef: {name: "${LLM_API_KEY_SECRET}", key: "${LLM_API_KEY_SECRET_KEY}"}}
+                - {name: RELAY_MODE, value: baseline}
+                - {name: RELAY_PLUGINS_FILE, value: /app/relay/plugins.baseline.toml}
+                - {name: MLFLOW_EXPERIMENT_NAME, value: "${BASELINE_EXPERIMENT}"}
+                - {name: MLFLOW_TRACKING_URI, value: "${MLFLOW_TRACKING_URI}"}
+                - {name: MLFLOW_OTLP_ENDPOINT, value: "${MLFLOW_OTLP_ENDPOINT}"}
+                - {name: MLFLOW_PUBLIC_URI, value: "${MLFLOW_PUBLIC_URI}"}
+                - {name: MLFLOW_WORKSPACE, value: "${NAMESPACE}"}
+                - {name: MLFLOW_TRACKING_TOKEN_FILE, value: /var/run/secrets/kubernetes.io/serviceaccount/token}
+                - {name: MLFLOW_TRACKING_SERVER_CERT_PATH, value: /etc/uc1/service-ca/service-ca.crt}
+                - {name: TOOL_TIMEOUT_SECONDS, value: "${TOOL_TIMEOUT_SECONDS}"}
+                - {name: PUBLIC_REDACTED_AGENT_URL, value: "http://localhost:${REDACTED_LOCAL_PORT}"}
+                - {name: PUBLIC_BASELINE_AGENT_URL, value: "http://localhost:${BASELINE_LOCAL_PORT}"}
+              volumeMounts:
+                - {name: service-ca, mountPath: /etc/uc1/service-ca, readOnly: true}
+                - {name: telemetry, mountPath: /app/telemetry}
+              readinessProbe:
+                httpGet: {path: /healthz, port: http}
+                periodSeconds: 5
+                failureThreshold: 60
+              resources:
+                requests: {cpu: 100m, memory: 384Mi}
+                limits: {memory: 1Gi}
+              securityContext:
+                allowPrivilegeEscalation: false
+                runAsNonRoot: true
+                capabilities: {drop: [ALL]}
+                seccompProfile: {type: RuntimeDefault}
+          volumes:
+            - name: service-ca
+              configMap: {name: uc1-service-ca}
+            - name: telemetry
+              emptyDir: {}
+
+  - apiVersion: v1
+    kind: Service
+    metadata:
+      name: uc1-agent-redacted
+      labels: {app.kubernetes.io/part-of: uc1-rhoai}
+    spec:
+      selector: {app: uc1-agent-redacted}
+      ports: [{name: http, port: 8000, targetPort: http}]
+
+  - apiVersion: v1
+    kind: Service
+    metadata:
+      name: uc1-agent-baseline
+      labels: {app.kubernetes.io/part-of: uc1-rhoai}
+    spec:
+      selector: {app: uc1-agent-baseline}
+      ports: [{name: http, port: 8000, targetPort: http}]

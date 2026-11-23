@@ -1,0 +1,112 @@
+# NeMo Relay plugin configuration: REDACTED mode (the use case 1 demo).
+#
+# The agent expands ${VAR} placeholders from its environment at startup
+# (see agent/src/customer_lookup_agent/relay_runtime.py), then passes this
+# file to nemo_relay.plugin.activate().
+#
+# Pipeline:  agent tool/LLM call -> Relay event -> pii_redaction sanitizers
+#            -> subscribers/exporters (OTLP to MLflow, local ATOF file)
+# The tool and the LLM always receive the original, unredacted values.
+
+version = 1
+
+[policy]
+unknown_component = "error"
+unknown_field = "error"
+unsupported_value = "error"
+
+# ---------------------------------------------------------------------------
+# Observability: export OpenInference-shaped OTLP traces to MLflow.
+# ---------------------------------------------------------------------------
+[[components]]
+kind = "observability"
+enabled = true
+
+[components.config]
+version = 4
+# MLflow in OpenShift AI is served over HTTPS (OpenShift service CA), so no
+# insecure_http_hosts entry is needed: Relay's secure-by-default transport
+# policy stays in force.
+
+[components.config.opentelemetry]
+enabled = true
+
+[[components.config.opentelemetry.endpoints]]
+# MLflow translates OpenInference span kinds into MLflow span types
+# (AGENT, CHAIN, LLM, TOOL), so traces render natively in the MLflow UI.
+type = "openinference"
+endpoint = "${MLFLOW_OTLP_TRACES_ENDPOINT}"
+transport = "http_binary"
+service_name = "customer-lookup-agent"
+service_version = "uc1-rhoai"
+scheduled_delay_millis = 500
+timeout_millis = 10000
+
+# Trust the CA that signs MLflow's certificate (OpenShift service CA), when set.
+# begin-optional: MLFLOW_OTLP_CA_CERT
+[components.config.opentelemetry.endpoints.tls]
+certificate = "${MLFLOW_OTLP_CA_CERT}"
+# end-optional
+
+# Authorization: "Bearer <service account token>", read from a file that the
+# agent refreshes from the pod's rotating token (Relay re-reads header_file).
+[components.config.opentelemetry.endpoints.header_file]
+authorization = "${MLFLOW_OTLP_AUTH_HEADER_FILE}"
+
+# Routing: the MLflow workspace (= namespace) and the experiment for the traces.
+[components.config.opentelemetry.endpoints.header_env]
+"x-mlflow-workspace" = "MLFLOW_OTLP_WORKSPACE"
+"x-mlflow-experiment-id" = "MLFLOW_OTLP_EXPERIMENT_ID"
+
+[components.config.opentelemetry.endpoints.resource_attributes]
+"demo.use_case" = "uc1"
+"demo.platform" = "openshift-ai"
+"demo.relay_mode" = "redacted"
+
+# Local copy of the same (sanitized) canonical event stream, for inspection
+# and for the automated verification script.
+[components.config.atof]
+enabled = true
+
+[[components.config.atof.sinks]]
+type = "file"
+output_directory = "${RELAY_TELEMETRY_DIR}"
+filename = "atof-redacted.jsonl"
+mode = "append"
+
+# ---------------------------------------------------------------------------
+# PII redaction: remove the SSN from every exported surface.
+# ---------------------------------------------------------------------------
+[[components]]
+kind = "pii_redaction"
+enabled = true
+
+[components.config]
+version = 1
+
+# Profile 1 - field-level: redact the `ssn` field wherever it appears as a
+# top-level key of a tool argument or tool result document, whatever its format.
+[[components.config.profiles]]
+mode = "builtin"
+priority = 10
+
+[components.config.profiles.builtin]
+action = "redact"
+pattern = '(?s).+'
+target_paths = ["/ssn"]
+replacement = "[REDACTED-SSN]"
+
+# Profile 2 - pattern-based: redact SSN-shaped values in every other string
+# leaf: user messages, LLM prompts and responses, echoed tool results, and
+# tool error details. Relay has no built-in SSN detector, so we supply a regex.
+# The separators are required on purpose: an undashed \d{9} pattern also
+# matches unrelated numbers such as nanosecond timestamp fractions. Profile 1
+# covers the structured `ssn` field whatever its format.
+[[components.config.profiles]]
+mode = "builtin"
+priority = 20
+
+[components.config.profiles.builtin]
+action = "redact"
+pattern = '\b\d{3}[- ]\d{2}[- ]\d{4}\b'
+replacement = "[REDACTED-SSN]"

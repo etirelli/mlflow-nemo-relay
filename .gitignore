@@ -6,3 +6,6 @@ __pycache__/
 *.egg-info/
 telemetry/
 .DS_Store
+config.env
+.port-forward/
+.build-ctx/
