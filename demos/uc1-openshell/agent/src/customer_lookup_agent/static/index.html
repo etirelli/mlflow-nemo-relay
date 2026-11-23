@@ -3,62 +3,122 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Customer Lookup Agent (OpenShell)</title>
+<title>Synthetica Bank · Support Assistant (OpenShell)</title>
 <style>
   :root {
-    --bg: #f6f7f9; --panel: #ffffff; --text: #1d2228; --muted: #5f6b7a; --border: #dde2e8;
-    --accent: #76b900; --accent-ink: #2f4a00; --danger: #c9190b; --danger-bg: #fdecea;
+    --bg: #f3f5f8; --panel: #ffffff; --text: #1d2228; --muted: #5f6b7a; --border: #dde2e8;
+    --brand: #1b4f8a; --brand-2: #2bb3a3; --brand-ink: #ffffff;
+    --accent: #76b900; --danger: #c9190b; --danger-bg: #fdecea;
     --ok: #1e7f3c; --ok-bg: #e7f5ec; --warn-bg: #fff4e5; --warn: #8a5300; --user: #e8f0fe;
+    --scroll: #c3cad3;
   }
   @media (prefers-color-scheme: dark) {
     :root {
-      --bg: #14171b; --panel: #1c2026; --text: #e6e9ed; --muted: #9aa5b1; --border: #2e353e;
-      --accent-ink: #c5ef7a; --danger: #ff8a80; --danger-bg: #3a1f1f; --ok: #7fd99a;
-      --ok-bg: #18301f; --warn-bg: #3a2c12; --warn: #ffcc80; --user: #1f2a3d;
+      --bg: #12151a; --panel: #1b1f25; --text: #e6e9ed; --muted: #9aa5b1; --border: #2e353e;
+      --brand: #3d7fc4; --brand-2: #3cc9b8;
+      --danger: #ff8a80; --danger-bg: #3a1f1f; --ok: #7fd99a; --ok-bg: #18301f;
+      --warn-bg: #3a2c12; --warn: #ffcc80; --user: #1f2a3d; --scroll: #3a424d;
     }
   }
   * { box-sizing: border-box; }
+  html, body { height: 100%; }
   body { margin: 0; background: var(--bg); color: var(--text);
          font: 15px/1.5 system-ui, -apple-system, "Segoe UI", "Red Hat Text", sans-serif; }
-  main { max-width: 880px; margin: 0 auto; padding: 24px 16px 40px; }
-  header h1 { font-size: 1.35rem; margin: 0 0 4px; }
-  header p { margin: 0 0 16px; color: var(--muted); }
-  .bar { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between;
-         background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; }
+
+  /* Full-height app layout: only the conversation scrolls. */
+  main { max-width: 900px; height: 100vh; height: 100dvh; margin: 0 auto; padding: 16px;
+         display: flex; flex-direction: column; gap: 12px; }
+
+  header { display: flex; align-items: center; gap: 14px; flex: none; }
+  .logo { width: 44px; height: 44px; flex: none; }
+  .brand { line-height: 1.2; min-width: 0; }
+  .brand .name { font-size: 1.25rem; font-weight: 700; letter-spacing: -.01em; }
+  .brand .name span { color: var(--brand); }
+  .brand .sub { color: var(--muted); font-size: 0.85rem; }
+  .badge { margin-left: auto; font-size: 0.75rem; color: var(--muted); border: 1px dashed var(--border);
+           border-radius: 999px; padding: 3px 10px; white-space: nowrap; }
+
+  .bar { flex: none; display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between;
+         background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 10px 14px; }
   .toggle { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
-  .toggle button { border: 0; background: transparent; color: var(--text); padding: 7px 14px; cursor: pointer; font: inherit; }
+  .toggle button { border: 0; background: transparent; color: var(--text); padding: 6px 14px; cursor: pointer; font: inherit; }
   .toggle button[aria-pressed="true"].redacted { background: var(--ok-bg); color: var(--ok); font-weight: 600; }
   .toggle button[aria-pressed="true"].baseline { background: var(--warn-bg); color: var(--warn); font-weight: 600; }
   .meta { color: var(--muted); font-size: 0.85rem; }
   .meta a { color: inherit; }
-  .chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 14px 0; }
+
+  .chips { flex: none; display: flex; flex-wrap: wrap; gap: 8px; }
   .chips button { border: 1px solid var(--border); background: var(--panel); color: var(--text);
-                  border-radius: 999px; padding: 6px 12px; cursor: pointer; font: inherit; font-size: 0.9rem; }
-  .chips button:hover { border-color: var(--accent); }
-  #log { display: flex; flex-direction: column; gap: 12px; min-height: 160px; }
-  .msg { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 10px 14px; }
-  .msg.user { background: var(--user); align-self: flex-end; max-width: 85%; }
-  .msg .who { font-size: 0.75rem; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin-bottom: 2px; }
+                  border-radius: 999px; padding: 5px 12px; cursor: pointer; font: inherit; font-size: 0.9rem; }
+  .chips button:hover { border-color: var(--brand); color: var(--brand); }
+  .chips button:disabled { opacity: .55; cursor: wait; }
+
+  /* Conversation panel: takes the remaining height, scrolls internally. */
+  .chat { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column;
+          background: var(--panel); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+  .chat-head { flex: none; display: flex; justify-content: space-between; align-items: center;
+               padding: 8px 14px; border-bottom: 1px solid var(--border); font-size: 0.85rem; color: var(--muted); }
+  .chat-head button { border: 0; background: transparent; color: var(--muted); cursor: pointer; font: inherit; padding: 2px 6px; }
+  .chat-head button:hover { color: var(--text); }
+  #log { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain;
+         display: flex; flex-direction: column; gap: 12px; padding: 14px;
+         scrollbar-width: thin; scrollbar-color: var(--scroll) transparent; }
+  #log::-webkit-scrollbar { width: 8px; }
+  #log::-webkit-scrollbar-thumb { background: var(--scroll); border-radius: 8px; }
+  .empty { margin: auto; text-align: center; color: var(--muted); font-size: 0.9rem; max-width: 420px; }
+
+  .msg { background: var(--bg); border: 1px solid var(--border); border-radius: 10px; padding: 9px 13px;
+         max-width: 88%; align-self: flex-start; overflow-wrap: anywhere; }
+  .msg.user { background: var(--user); align-self: flex-end; }
+  .msg .who { font-size: 0.72rem; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin-bottom: 2px; }
+  .msg .text p { margin: 0 0 6px; }
+  .msg .text p:last-child { margin-bottom: 0; }
   .tool { display: inline-block; font-size: 0.8rem; border-radius: 6px; padding: 2px 8px; margin: 6px 6px 0 0; }
   .tool.success { background: var(--ok-bg); color: var(--ok); }
   .tool.error { background: var(--danger-bg); color: var(--danger); }
   .tool.blocked { background: var(--warn-bg); color: var(--warn); font-weight: 600; }
   .msg .foot { font-size: 0.8rem; color: var(--muted); margin-top: 6px; }
   .msg .foot a { color: inherit; }
-  form { display: flex; gap: 8px; margin-top: 16px; }
+  .dots::after { content: "…"; animation: blink 1.2s infinite; }
+  @keyframes blink { 50% { opacity: .2; } }
+
+  form { flex: none; display: flex; gap: 8px; padding: 10px; border-top: 1px solid var(--border); }
   input[type=text] { flex: 1; min-width: 0; padding: 10px 12px; border-radius: 8px; border: 1px solid var(--border);
-                     background: var(--panel); color: var(--text); font: inherit; }
-  form button { padding: 10px 18px; border-radius: 8px; border: 0; background: var(--accent); color: #102000;
+                     background: var(--bg); color: var(--text); font: inherit; }
+  input[type=text]:focus { outline: 2px solid var(--brand); outline-offset: -1px; }
+  form button { padding: 10px 18px; border-radius: 8px; border: 0; background: var(--brand); color: var(--brand-ink);
                 font: inherit; font-weight: 600; cursor: pointer; }
   form button:disabled { opacity: .6; cursor: wait; }
-  .note { margin-top: 18px; font-size: 0.85rem; color: var(--muted); }
+
+  .note { flex: none; margin: 0; font-size: 0.8rem; color: var(--muted); }
+
+  @media (max-width: 560px) {
+    main { padding: 10px; gap: 8px; }
+    .badge { display: none; }
+    .msg { max-width: 100%; }
+  }
 </style>
 </head>
 <body>
 <main>
   <header>
-    <h1>Customer Lookup Agent</h1>
-    <p>LangGraph agent in an NVIDIA OpenShell sandbox &middot; NeMo Relay telemetry &middot; MLflow tracing. Every customer record here is synthetic.</p>
+    <!-- Fictitious brand for the demo. Every customer record here is synthetic. -->
+    <svg class="logo" viewBox="0 0 48 48" role="img" aria-label="Synthetica Bank logo">
+      <defs>
+        <linearGradient id="lg" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0" stop-color="var(--brand)"/><stop offset="1" stop-color="var(--brand-2)"/>
+        </linearGradient>
+      </defs>
+      <path d="M24 3 42 10v13c0 11-7.6 19.4-18 22C13.6 42.4 6 34 6 23V10z" fill="url(#lg)"/>
+      <path d="M30.5 17.5c-1.4-1.6-3.6-2.5-6.3-2.5-3.9 0-6.6 2-6.6 5 0 6.2 12.4 3.4 12.4 8.1 0 1.8-1.9 3-4.8 3-2.6 0-4.8-1-6.2-2.8"
+            fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round"/>
+      <circle cx="24" cy="11.5" r="1.6" fill="#fff"/><circle cx="24" cy="36.5" r="1.6" fill="#fff"/>
+    </svg>
+    <div class="brand">
+      <div class="name">Synthetica <span>Bank</span></div>
+      <div class="sub">Customer Support Assistant &middot; LangGraph in an NVIDIA OpenShell sandbox &middot; NeMo Relay &middot; MLflow</div>
+    </div>
+    <div class="badge">demo &middot; synthetic data</div>
   </header>
 
   <div class="bar">
@@ -79,21 +139,36 @@
     <button data-msg="Look up the customer with SSN 900-12-0002. Then call notify_partner_crm with the customer_id and ssn from the result to sync the record to the partner CRM.">Sync to partner CRM (blocked by sandbox)</button>
   </div>
 
-  <div id="log" aria-live="polite"></div>
-
-  <form id="form">
-    <input id="input" type="text" autocomplete="off" placeholder="Ask about a customer, e.g. SSN 900-12-0003" required>
-    <button id="send" type="submit">Send</button>
-  </form>
+  <section class="chat" aria-label="Conversation">
+    <div class="chat-head">
+      <span id="chat-title">Conversation</span>
+      <button id="clear" type="button" title="Clear the conversation (traces stay in MLflow)">Clear</button>
+    </div>
+    <div id="log" aria-live="polite">
+      <div class="empty" id="empty">Ask about a customer by SSN, or use a quick action above.<br>
+        Each reply links to its trace in MLflow.</div>
+    </div>
+    <form id="form">
+      <input id="input" type="text" autocomplete="off" placeholder="Ask about a customer, e.g. SSN 900-12-0003" required>
+      <button id="send" type="submit">Send</button>
+    </form>
+  </section>
 
   <p class="note">The chat shows real values because the support engineer is entitled to them.
     NeMo Relay redacts only the <em>telemetry</em> exported to MLflow. The OpenShell sandbox decides where the agent
     may connect: MLflow and the LLM, nothing else. Open the trace links to compare the two modes.</p>
 </main>
 <script>
-  const state = { mode: "redacted", agents: { redacted: location.origin, baseline: location.origin }, info: {} };
+  const state = { mode: "redacted", agents: { redacted: location.origin, baseline: location.origin }, info: {}, busy: false };
   const $ = (s) => document.querySelector(s);
   const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+  // Minimal, safe formatting for model replies: escape first, then **bold**, `code` and paragraphs.
+  function fmt(text) {
+    return esc(text).split(/\n{2,}/).map((p) =>
+      "<p>" + p.replace(/\*\*(.+?)\*\*/g, "<b>$1</b>").replace(/`([^`]+)`/g, "<code>$1</code>").replace(/\n/g, "<br>") + "</p>"
+    ).join("");
+  }
 
   async function loadInfo() {
     try {
@@ -113,19 +188,30 @@
     } catch (e) { $("#meta").textContent = `${state.mode} agent unreachable at ${state.agents[state.mode]}`; }
   }
 
+  // Keep the newest message in view by scrolling the conversation panel only, never the page.
+  function scrollLog() { const log = $("#log"); log.scrollTo({ top: log.scrollHeight, behavior: "smooth" }); }
+
   function add(role, html) {
+    $("#empty")?.remove();
     const div = document.createElement("div");
     div.className = "msg " + role;
     div.innerHTML = html;
     $("#log").appendChild(div);
-    div.scrollIntoView({ behavior: "smooth", block: "end" });
+    scrollLog();
     return div;
   }
 
+  function setBusy(busy) {
+    state.busy = busy;
+    $("#send").disabled = busy;
+    document.querySelectorAll(".chips button").forEach((b) => (b.disabled = busy));
+  }
+
   async function send(message) {
-    $("#send").disabled = true;
-    add("user", `<div class="who">you</div>${esc(message)}`);
-    const pending = add("agent", `<div class="who">agent &middot; ${state.mode}</div><span class="meta">thinking&hellip;</span>`);
+    if (state.busy) return;
+    setBusy(true);
+    add("user", `<div class="who">you</div><div class="text">${fmt(message)}</div>`);
+    const pending = add("agent", `<div class="who">agent &middot; ${esc(state.mode)}</div><span class="meta dots">thinking</span>`);
     try {
       const r = await fetch(state.agents[state.mode] + "/api/chat", {
         method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ message }),
@@ -137,15 +223,22 @@
         const cls = blocked ? "blocked" : (t.status === "error" ? "error" : "success");
         return `<span class="tool ${cls}">${esc(t.name)}: ${blocked ? "blocked by OpenShell policy" : esc(t.status)}</span>`;
       }).join("");
-      pending.innerHTML = `<div class="who">agent &middot; ${esc(body.relay_mode)}</div>${esc(body.reply)}<div>${tools}</div>
+      pending.innerHTML = `<div class="who">agent &middot; ${esc(body.relay_mode)}</div><div class="text">${fmt(body.reply)}</div><div>${tools}</div>
         <div class="foot">${body.duration_ms} ms &middot; <a href="${esc(body.mlflow_trace_url)}" target="_blank" rel="noopener">view trace in MLflow</a></div>`;
     } catch (e) {
       pending.innerHTML = `<div class="who">agent</div><span class="tool error">request failed</span> ${esc(e.message)}`;
-    } finally { $("#send").disabled = false; }
+    } finally {
+      setBusy(false);
+      scrollLog();
+      $("#input").focus();
+    }
   }
 
   document.querySelectorAll(".toggle button").forEach((b) => b.addEventListener("click", () => { state.mode = b.dataset.mode; refreshMeta(); }));
   document.querySelectorAll(".chips button").forEach((b) => b.addEventListener("click", () => send(b.dataset.msg)));
+  $("#clear").addEventListener("click", () => {
+    $("#log").innerHTML = '<div class="empty" id="empty">Conversation cleared. The traces are still in MLflow.</div>';
+  });
   $("#form").addEventListener("submit", (e) => { e.preventDefault(); const v = $("#input").value.trim(); if (v) { $("#input").value = ""; send(v); } });
   loadInfo();
 </script>
