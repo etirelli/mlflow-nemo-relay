@@ -1,0 +1,28 @@
+# Upstream (community) MLflow tracking server with basic authentication.
+FROM docker.io/library/python:3.12-slim
+
+ARG MLFLOW_VERSION=3.17.2
+# MLFLOW_SERVER_ENABLE_JOB_EXECUTION=false: the background job executor (online
+# scoring/judges) is not used by this demo and needs several hundred MB, so it is
+# disabled to keep small VMs from running out of memory.
+ENV PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1 PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    MLFLOW_DISABLE_AGENT_HINT=1 \
+    MLFLOW_AUTH_CONFIG_PATH=/opt/demo/basic_auth.ini \
+    MLFLOW_SERVER_ENABLE_JOB_EXECUTION=false
+
+RUN pip install "mlflow[auth]==${MLFLOW_VERSION}" requests
+
+COPY basic_auth.ini bootstrap.py /opt/demo/
+RUN useradd --uid 1001 --create-home mlflow && mkdir -p /mlflow/data /mlflow/artifacts \
+    && chown -R mlflow /mlflow
+USER 1001
+WORKDIR /mlflow
+
+EXPOSE 5000
+# --app-name basic-auth enables MLflow authentication on the REST API, the UI,
+# and the OTLP ingestion endpoint (/v1/traces). One worker keeps memory low
+# enough for small laptop VMs (colima / podman machine default is 2 GiB).
+CMD ["sh", "-c", "exec mlflow server --app-name basic-auth --host 0.0.0.0 --port 5000 --workers \"${MLFLOW_WORKERS:-1}\" \
+  --backend-store-uri sqlite:////mlflow/data/mlflow.db \
+  --artifacts-destination /mlflow/artifacts --serve-artifacts \
+  --allowed-hosts \"${MLFLOW_ALLOWED_HOSTS:-*}\""]
