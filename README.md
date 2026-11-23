@@ -18,7 +18,7 @@ product stack. Each folder runs on its own and has its own documentation.
 | [`demos/uc1-openshell`](demos/uc1-openshell) | **UC1**, with the agent running in an **NVIDIA OpenShell** sandbox (policy-enforced egress, blocked exfiltration shown in MLflow) | uc1-community + OpenShell 0.1.9 (Podman) | ✅ Ready (validated live 2026-11-23, 16/16) |
 | [`demos/uc1-rhoai`](demos/uc1-rhoai) | **UC1** on Red Hat OpenShift AI: per-project MLflow workspace, service-account auth with least-privilege RBAC, TLS | MLflow in OpenShift AI 3.6 + NeMo Relay 0.11 on OpenShift 4.22; any OpenAI-compatible LLM (configured locally) | ✅ Ready (validated live 2026-11-23, 12/12) |
 | [`demos/uc2-community`](demos/uc2-community) | **UC2** Use guardrail decisions to improve agent behavior: Relay blocks refunds above a limit, MLflow evaluates agent v1 vs v2 (code scorers + LLM judge) | Upstream MLflow 3.17 + NeMo Relay 0.11 + LangGraph, on Podman/Docker; any OpenAI-compatible LLM | ✅ Ready (validated 2026-11-23, 16/16) |
-| `demos/uc2-rhoai` | UC2 | MLflow in Red Hat OpenShift AI + NeMo Relay | 🔜 Next |
+| [`demos/uc2-rhoai`](demos/uc2-rhoai) | **UC2** on Red Hat OpenShift AI: guardrail decisions in the project's MLflow workspace; v1 vs v2 evaluation (code scorers + LLM judge) as an in-cluster Job with its own service account | MLflow in OpenShift AI 3.6 + NeMo Relay 0.11 on OpenShift 4.22; any OpenAI-compatible LLM (configured locally) | ✅ Ready (validated live 2026-11-23, 16/16) |
 | `demos/uc2-openshell` | UC2 | uc2-community + OpenShell blocking the refund service's network path | 🔜 Planned |
 | `demos/uc3-rhoai` | **UC3** Validate guardrail changes before rollout | RHOAI + OpenShift AI Observability + NeMo Relay | 🔜 Planned |
 
@@ -49,7 +49,8 @@ Then follow the [UC1 README](demos/uc1-community/README.md) and the
     ├── uc1-community/        # UC1 on upstream MLflow + NeMo Relay (see its README)
     ├── uc1-openshell/        # UC1 with the agent in an NVIDIA OpenShell sandbox
     ├── uc1-rhoai/            # UC1 on Red Hat OpenShift AI (MLflow workspaces, Kubernetes auth)
-    └── uc2-community/        # UC2: guardrail decisions -> evaluate and improve the agent
+    ├── uc2-community/        # UC2: guardrail decisions -> evaluate and improve the agent
+    └── uc2-rhoai/            # UC2 on Red Hat OpenShift AI (evaluation as an in-cluster Job)
 ```
 
 All data in these demos is synthetic. The SSNs use the never-issued `900-xx-xxxx` range.

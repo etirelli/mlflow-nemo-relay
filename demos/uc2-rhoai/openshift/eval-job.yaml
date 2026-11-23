@@ -1,0 +1,86 @@
+# UC2 evaluation as an in-cluster Job (`make eval` creates one per run).
+#
+# Runs MLflow GenAI evaluation of agent v1 and v2 (the in-cluster Services) on the
+# regression dataset, with code scorers and an LLM judge. Authenticates to MLflow in
+# OpenShift AI as the uc2-evaluator service account; the judge's API key comes from
+# the same Secret as the agents', so it never leaves the cluster.
+apiVersion: template.openshift.io/v1
+kind: Template
+metadata:
+  name: uc2-rhoai-evaluation
+parameters:
+  - name: NAMESPACE
+    required: true
+  - name: RUN_ID
+    description: Suffix for the Job name
+    required: true
+  - name: LLM_API_KEY_SECRET
+    required: true
+  - name: LLM_API_KEY_SECRET_KEY
+    value: api-key
+  - name: MLFLOW_TRACKING_URI
+    value: https://mlflow.redhat-ods-applications.svc:8443/mlflow
+  - name: EVAL_EXPERIMENT
+    value: uc2-rhoai-refund-agent-eval
+  - name: EVAL_DATASET
+    value: uc2-refund-policy-regression
+  - name: EVAL_ARGS
+    description: Extra arguments, e.g. --no-judge
+    value: ""
+  - name: EVAL_WORKERS
+    value: "4"
+objects:
+  - apiVersion: batch/v1
+    kind: Job
+    metadata:
+      name: "uc2-eval-${RUN_ID}"
+      labels: {app.kubernetes.io/part-of: uc2-rhoai, app: uc2-eval}
+    spec:
+      backoffLimit: 0
+      ttlSecondsAfterFinished: 86400
+      template:
+        metadata:
+          labels: {app.kubernetes.io/part-of: uc2-rhoai, app: uc2-eval}
+        spec:
+          serviceAccountName: uc2-evaluator
+          restartPolicy: Never
+          containers:
+            - name: eval
+              image: "image-registry.openshift-image-registry.svc:5000/${NAMESPACE}/uc2-agent:latest"
+              imagePullPolicy: Always
+              command: ["sh", "-c"]
+              args:
+                - >-
+                  exec python -m support_agent.evaluation
+                  --agent v1=http://uc2-agent-v1:8000 --agent v2=http://uc2-agent-v2:8000 ${EVAL_ARGS}
+              env:
+                - name: JUDGE_BASE_URL
+                  valueFrom: {configMapKeyRef: {name: uc2-llm, key: LLM_BASE_URL}}
+                - name: JUDGE_MODEL
+                  valueFrom: {configMapKeyRef: {name: uc2-llm, key: LLM_MODEL}}
+                - name: REFUND_LIMIT
+                  valueFrom: {configMapKeyRef: {name: uc2-llm, key: REFUND_LIMIT}}
+                - name: OPENAI_API_KEY
+                  valueFrom: {secretKeyRef: {name: "${LLM_API_KEY_SECRET}", key: "${LLM_API_KEY_SECRET_KEY}"}}
+                - {name: MLFLOW_TRACKING_URI, value: "${MLFLOW_TRACKING_URI}"}
+                - {name: MLFLOW_WORKSPACE, value: "${NAMESPACE}"}
+                - {name: MLFLOW_TRACKING_TOKEN_FILE, value: /var/run/secrets/kubernetes.io/serviceaccount/token}
+                - {name: MLFLOW_TRACKING_SERVER_CERT_PATH, value: /etc/uc2/service-ca/service-ca.crt}
+                - {name: EVAL_EXPERIMENT, value: "${EVAL_EXPERIMENT}"}
+                - {name: EVAL_DATASET, value: "${EVAL_DATASET}"}
+                - {name: MLFLOW_GENAI_EVAL_MAX_WORKERS, value: "${EVAL_WORKERS}"}
+                - {name: MLFLOW_DISABLE_AGENT_HINT, value: "1"}
+                - {name: HOME, value: /tmp}
+              volumeMounts:
+                - {name: service-ca, mountPath: /etc/uc2/service-ca, readOnly: true}
+              resources:
+                requests: {cpu: 200m, memory: 512Mi}
+                limits: {memory: 1536Mi}
+              securityContext:
+                allowPrivilegeEscalation: false
+                runAsNonRoot: true
+                capabilities: {drop: [ALL]}
+                seccompProfile: {type: RuntimeDefault}
+          volumes:
+            - name: service-ca
+              configMap: {name: uc2-service-ca}

@@ -1,0 +1,307 @@
+# UC2 on Red Hat OpenShift AI: support agent v1/v2 (LangGraph + NeMo Relay refund guardrail) -> MLflow in OpenShift AI.
+#
+# Nothing cluster-specific lives here: every endpoint, model and secret name is a
+# parameter, supplied from your local config.env (see config.env.example):
+#
+#   oc process -f openshift/template.yaml --param-file=config.env | oc apply -n <namespace> -f -
+#
+# The Makefile does this for you (`make deploy`).
+apiVersion: template.openshift.io/v1
+kind: Template
+metadata:
+  name: uc2-rhoai-support-agent
+  annotations:
+    description: >-
+      UC2 demo: NVIDIA NeMo Relay blocks refunds above a limit and records each decision;
+      MLflow in OpenShift AI shows the decisions and evaluates agent v1 vs v2.
+    tags: mlflow,nemo-relay,langgraph,demo
+parameters:
+  - name: NAMESPACE
+    description: Namespace (project) for the demo. It is also the MLflow workspace.
+    required: true
+  - name: LLM_BASE_URL
+    description: OpenAI-compatible base URL of the LLM, e.g. https://host/v1
+    required: true
+  - name: LLM_MODEL
+    description: Model id as listed by GET <LLM_BASE_URL>/models
+    required: true
+  - name: LLM_API_KEY_SECRET
+    description: Name of an existing Secret in NAMESPACE that holds the LLM API key
+    required: true
+  - name: LLM_API_KEY_SECRET_KEY
+    description: Key inside that Secret
+    value: api-key
+  - name: LLM_PROVIDER
+    description: "'openai' (any OpenAI-compatible endpoint) or 'scripted' (no LLM)"
+    value: openai
+  - name: MLFLOW_TRACKING_URI
+    description: MLflow as seen from inside the cluster (OpenShift AI service, with the /mlflow prefix)
+    value: https://mlflow.redhat-ods-applications.svc:8443/mlflow
+  - name: MLFLOW_OTLP_ENDPOINT
+    description: >-
+      MLflow OTLP trace endpoint. Empty = derived from MLFLOW_TRACKING_URI's scheme and host
+      plus /v1/traces (the OTLP route is not under the /mlflow prefix).
+    value: ""
+  - name: MLFLOW_PUBLIC_URI
+    description: Browser-facing MLflow URL (OpenShift AI gateway), used for links in the chat UI
+    required: true
+  - name: TRACE_EXPERIMENT
+    description: Experiment for the agents' traces (both versions)
+    value: uc2-rhoai-refund-agent
+  - name: EVAL_EXPERIMENT
+    description: Experiment for the evaluation runs and the regression dataset
+    value: uc2-rhoai-refund-agent-eval
+  - name: EVAL_DATASET
+    value: uc2-refund-policy-regression
+  - name: POLICY_VERSION
+    description: Version of the Relay refund policy (fixed across agent versions)
+    value: v1
+  - name: REFUND_LIMIT
+    value: "500"
+  - name: TOOL_TIMEOUT_SECONDS
+    value: "2.0"
+  - name: V1_LOCAL_PORT
+    description: Local port of `make port-forward` for agent v1 (chat UI toggle)
+    value: "8000"
+  - name: V2_LOCAL_PORT
+    value: "8001"
+
+objects:
+  # --- Identity and least-privilege access to MLflow ---------------------------------------
+  - apiVersion: v1
+    kind: ServiceAccount
+    metadata:
+      name: uc2-agent
+      labels: {app.kubernetes.io/part-of: uc2-rhoai}
+
+  # MLflow in OpenShift AI authorizes each request with a SelfSubjectAccessReview on
+  # experiments.mlflow.kubeflow.org in the workspace (namespace). Both agent versions may
+  # read and write traces to the trace experiment only: no create, no other experiments.
+  - apiVersion: rbac.authorization.k8s.io/v1
+    kind: Role
+    metadata:
+      name: uc2-trace-writer
+      labels: {app.kubernetes.io/part-of: uc2-rhoai}
+    rules:
+      - apiGroups: ["mlflow.kubeflow.org"]
+        resources: ["experiments"]
+        verbs: ["get", "update"]
+        resourceNames: ["${TRACE_EXPERIMENT}"]
+
+  - apiVersion: rbac.authorization.k8s.io/v1
+    kind: RoleBinding
+    metadata:
+      name: uc2-trace-writer
+      labels: {app.kubernetes.io/part-of: uc2-rhoai}
+    roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: uc2-trace-writer}
+    subjects:
+      - {kind: ServiceAccount, name: uc2-agent, namespace: "${NAMESPACE}"}
+
+  # The evaluation Job's identity: writes evaluation runs, traces, assessments and the
+  # regression dataset to the evaluation experiment. It has no access to the agents' traces.
+  - apiVersion: v1
+    kind: ServiceAccount
+    metadata:
+      name: uc2-evaluator
+      labels: {app.kubernetes.io/part-of: uc2-rhoai}
+
+  - apiVersion: rbac.authorization.k8s.io/v1
+    kind: Role
+    metadata:
+      name: uc2-evaluator
+      labels: {app.kubernetes.io/part-of: uc2-rhoai}
+    rules:
+      # Not restricted with resourceNames, unlike the agents' Role: evaluation uploads trace
+      # artifacts through /mlflow-artifacts/artifacts/workspaces/<ns>/<experiment_id>/..., and
+      # the OpenShift AI MLflow auth plugin (3.6.0-ea.2) only resolves the experiment from
+      # paths that *start* with the id. The name is unresolved, so a name-scoped grant is
+      # denied (403). See docs/product-gaps.md. Scope stays this namespace (= workspace).
+      - apiGroups: ["mlflow.kubeflow.org"]
+        resources: ["experiments"]
+        verbs: ["get", "update"]
+      - apiGroups: ["mlflow.kubeflow.org"]
+        resources: ["datasets"]
+        verbs: ["get", "list", "create", "update"]
+
+  - apiVersion: rbac.authorization.k8s.io/v1
+    kind: RoleBinding
+    metadata:
+      name: uc2-evaluator
+      labels: {app.kubernetes.io/part-of: uc2-rhoai}
+    roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: uc2-evaluator}
+    subjects:
+      - {kind: ServiceAccount, name: uc2-evaluator, namespace: "${NAMESPACE}"}
+
+  # OpenShift injects the service CA bundle (signs mlflow.redhat-ods-applications.svc).
+  - apiVersion: v1
+    kind: ConfigMap
+    metadata:
+      name: uc2-service-ca
+      labels: {app.kubernetes.io/part-of: uc2-rhoai}
+      annotations:
+        service.beta.openshift.io/inject-cabundle: "true"
+
+  # --- LLM configuration (non-secret) --------------------------------------------------------
+  - apiVersion: v1
+    kind: ConfigMap
+    metadata:
+      name: uc2-llm
+      labels: {app.kubernetes.io/part-of: uc2-rhoai}
+    data:
+      LLM_PROVIDER: "${LLM_PROVIDER}"
+      LLM_BASE_URL: "${LLM_BASE_URL}"
+      LLM_MODEL: "${LLM_MODEL}"
+      POLICY_VERSION: "${POLICY_VERSION}"
+      REFUND_LIMIT: "${REFUND_LIMIT}"
+
+  # --- In-cluster image build (no external registry) -----------------------------------------
+  - apiVersion: image.openshift.io/v1
+    kind: ImageStream
+    metadata:
+      name: uc2-agent
+      labels: {app.kubernetes.io/part-of: uc2-rhoai}
+
+  - apiVersion: build.openshift.io/v1
+    kind: BuildConfig
+    metadata:
+      name: uc2-agent
+      labels: {app.kubernetes.io/part-of: uc2-rhoai}
+    spec:
+      source: {type: Binary}
+      strategy:
+        type: Docker
+        dockerStrategy: {dockerfilePath: agent/Containerfile}
+      output:
+        to: {kind: ImageStreamTag, name: "uc2-agent:latest"}
+      resources:
+        requests: {cpu: 500m, memory: 1Gi}
+        limits: {memory: 2Gi}
+
+  # --- Agents v1 and v2: same image and Relay policy; AGENT_VERSION selects prompt + tools ---
+  - apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: uc2-agent-v1
+      labels: {app: uc2-agent-v1, app.kubernetes.io/part-of: uc2-rhoai}
+    spec:
+      replicas: 1
+      selector: {matchLabels: {app: uc2-agent-v1}}
+      template:
+        metadata:
+          labels: {app: uc2-agent-v1, app.kubernetes.io/part-of: uc2-rhoai}
+        spec:
+          serviceAccountName: uc2-agent
+          containers:
+            - name: agent
+              image: "image-registry.openshift-image-registry.svc:5000/${NAMESPACE}/uc2-agent:latest"
+              imagePullPolicy: Always
+              ports: [{containerPort: 8000, name: http}]
+              envFrom: [{configMapRef: {name: uc2-llm}}]
+              env:
+                - name: LLM_API_KEY
+                  valueFrom: {secretKeyRef: {name: "${LLM_API_KEY_SECRET}", key: "${LLM_API_KEY_SECRET_KEY}"}}
+                - {name: AGENT_VERSION, value: v1}
+                - {name: RELAY_PLUGINS_FILE, value: /app/relay/plugins.toml}
+                - {name: MLFLOW_EXPERIMENT_NAME, value: "${TRACE_EXPERIMENT}"}
+                - {name: MLFLOW_TRACKING_URI, value: "${MLFLOW_TRACKING_URI}"}
+                - {name: MLFLOW_OTLP_ENDPOINT, value: "${MLFLOW_OTLP_ENDPOINT}"}
+                - {name: MLFLOW_PUBLIC_URI, value: "${MLFLOW_PUBLIC_URI}"}
+                - {name: MLFLOW_WORKSPACE, value: "${NAMESPACE}"}
+                - {name: MLFLOW_TRACKING_TOKEN_FILE, value: /var/run/secrets/kubernetes.io/serviceaccount/token}
+                - {name: MLFLOW_TRACKING_SERVER_CERT_PATH, value: /etc/uc2/service-ca/service-ca.crt}
+                - {name: TOOL_TIMEOUT_SECONDS, value: "${TOOL_TIMEOUT_SECONDS}"}
+                - {name: PUBLIC_V1_AGENT_URL, value: "http://localhost:${V1_LOCAL_PORT}"}
+                - {name: PUBLIC_V2_AGENT_URL, value: "http://localhost:${V2_LOCAL_PORT}"}
+              volumeMounts:
+                - {name: service-ca, mountPath: /etc/uc2/service-ca, readOnly: true}
+                - {name: telemetry, mountPath: /app/telemetry}
+              readinessProbe:
+                httpGet: {path: /healthz, port: http}
+                periodSeconds: 5
+                failureThreshold: 60
+              resources:
+                requests: {cpu: 100m, memory: 384Mi}
+                limits: {memory: 1Gi}
+              securityContext:
+                allowPrivilegeEscalation: false
+                runAsNonRoot: true
+                capabilities: {drop: [ALL]}
+                seccompProfile: {type: RuntimeDefault}
+          volumes:
+            - name: service-ca
+              configMap: {name: uc2-service-ca}
+            - name: telemetry
+              emptyDir: {}
+
+  - apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: uc2-agent-v2
+      labels: {app: uc2-agent-v2, app.kubernetes.io/part-of: uc2-rhoai}
+    spec:
+      replicas: 1
+      selector: {matchLabels: {app: uc2-agent-v2}}
+      template:
+        metadata:
+          labels: {app: uc2-agent-v2, app.kubernetes.io/part-of: uc2-rhoai}
+        spec:
+          serviceAccountName: uc2-agent
+          containers:
+            - name: agent
+              image: "image-registry.openshift-image-registry.svc:5000/${NAMESPACE}/uc2-agent:latest"
+              imagePullPolicy: Always
+              ports: [{containerPort: 8000, name: http}]
+              envFrom: [{configMapRef: {name: uc2-llm}}]
+              env:
+                - name: LLM_API_KEY
+                  valueFrom: {secretKeyRef: {name: "${LLM_API_KEY_SECRET}", key: "${LLM_API_KEY_SECRET_KEY}"}}
+                - {name: AGENT_VERSION, value: v2}
+                - {name: RELAY_PLUGINS_FILE, value: /app/relay/plugins.toml}
+                - {name: MLFLOW_EXPERIMENT_NAME, value: "${TRACE_EXPERIMENT}"}
+                - {name: MLFLOW_TRACKING_URI, value: "${MLFLOW_TRACKING_URI}"}
+                - {name: MLFLOW_OTLP_ENDPOINT, value: "${MLFLOW_OTLP_ENDPOINT}"}
+                - {name: MLFLOW_PUBLIC_URI, value: "${MLFLOW_PUBLIC_URI}"}
+                - {name: MLFLOW_WORKSPACE, value: "${NAMESPACE}"}
+                - {name: MLFLOW_TRACKING_TOKEN_FILE, value: /var/run/secrets/kubernetes.io/serviceaccount/token}
+                - {name: MLFLOW_TRACKING_SERVER_CERT_PATH, value: /etc/uc2/service-ca/service-ca.crt}
+                - {name: TOOL_TIMEOUT_SECONDS, value: "${TOOL_TIMEOUT_SECONDS}"}
+                - {name: PUBLIC_V1_AGENT_URL, value: "http://localhost:${V1_LOCAL_PORT}"}
+                - {name: PUBLIC_V2_AGENT_URL, value: "http://localhost:${V2_LOCAL_PORT}"}
+              volumeMounts:
+                - {name: service-ca, mountPath: /etc/uc2/service-ca, readOnly: true}
+                - {name: telemetry, mountPath: /app/telemetry}
+              readinessProbe:
+                httpGet: {path: /healthz, port: http}
+                periodSeconds: 5
+                failureThreshold: 60
+              resources:
+                requests: {cpu: 100m, memory: 384Mi}
+                limits: {memory: 1Gi}
+              securityContext:
+                allowPrivilegeEscalation: false
+                runAsNonRoot: true
+                capabilities: {drop: [ALL]}
+                seccompProfile: {type: RuntimeDefault}
+          volumes:
+            - name: service-ca
+              configMap: {name: uc2-service-ca}
+            - name: telemetry
+              emptyDir: {}
+
+  - apiVersion: v1
+    kind: Service
+    metadata:
+      name: uc2-agent-v1
+      labels: {app.kubernetes.io/part-of: uc2-rhoai}
+    spec:
+      selector: {app: uc2-agent-v1}
+      ports: [{name: http, port: 8000, targetPort: http}]
+
+  - apiVersion: v1
+    kind: Service
+    metadata:
+      name: uc2-agent-v2
+      labels: {app.kubernetes.io/part-of: uc2-rhoai}
+    spec:
+      selector: {app: uc2-agent-v2}
+      ports: [{name: http, port: 8000, targetPort: http}]
