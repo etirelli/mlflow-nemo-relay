@@ -24,10 +24,10 @@ flowchart LR
 
     subgraph sbx["OpenShell sandbox uc1-agent-redacted (workload networking off)"]
         api["FastAPI :8000<br/>(bound to 127.0.0.1)"] --> scope["Relay agent scope"]
-        scope --> graph["LangGraph agent<br/>+ NemoRelayMiddleware"]
-        graph -->|"lookup_customer<br/>ssn=900-12-0001"| tool["Synthetic records<br/>+ slow legacy shard"]
-        graph -->|"notify_partner_crm"| crm["httpx POST<br/>partner-crm.example.com"]
-        graph -. "events (raw)" .-> pii["Relay pii_redaction"]
+        scope --> agent_graph["LangGraph agent<br/>+ NemoRelayMiddleware"]
+        agent_graph -->|"lookup_customer<br/>ssn=900-12-0001"| tool["Synthetic records<br/>+ slow legacy shard"]
+        agent_graph -->|"notify_partner_crm"| crm["httpx POST<br/>partner-crm.example.com"]
+        agent_graph -. "events (raw)" .-> pii["Relay pii_redaction"]
         pii -. "sanitized" .-> otel["OTLP exporter"]
         pii -. "sanitized" .-> atof["ATOF file<br/>/sandbox/telemetry"]
     end
@@ -36,7 +36,7 @@ flowchart LR
         proxy{{"policy engine<br/>+ egress proxy"}}
     end
 
-    graph -->|"LLM call"| proxy
+    agent_graph -->|"LLM call"| proxy
     otel -->|"POST /v1/traces"| proxy
     crm -->|"CONNECT :443"| proxy
     proxy -->|"allow: POST /v1/chat/completions"| llm[("Ollama on laptop<br/>host.openshell.internal:11434")]

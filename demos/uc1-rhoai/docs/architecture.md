@@ -9,16 +9,16 @@ flowchart LR
     subgraph ns["Project uc1-rhoai  (= MLflow workspace)"]
         agent["Deployment uc1-agent-redacted<br/>SA uc1-agent"]
         subgraph pod["Agent pod"]
-            graph["LangGraph agent<br/>+ NemoRelayMiddleware"] -. "events (raw)" .-> pii["Relay pii_redaction"]
+            agent_graph["LangGraph agent<br/>+ NemoRelayMiddleware"] -. "events (raw)" .-> pii["Relay pii_redaction"]
             pii -. "sanitized" .-> otel["OTLP exporter"]
             tok["SA token<br/>(projected, rotating)"] --> hdr["/tmp/relay-mlflow-authorization<br/>Bearer &lt;token&gt;"]
             hdr --> otel
         end
-        secret[("Secret<br/>LLM API key")] --> graph
+        secret[("Secret<br/>LLM API key")] --> agent_graph
         role["Role uc1-trace-writer<br/>experiments: get, update<br/>resourceNames: redacted, baseline"]
     end
 
-    graph -->|"HTTPS, OpenAI API"| llm[("LLM endpoint<br/>(config.env)")]
+    agent_graph -->|"HTTPS, OpenAI API"| llm[("LLM endpoint<br/>(config.env)")]
     otel -->|"HTTPS (service CA)<br/>POST /v1/traces<br/>Authorization: Bearer …<br/>X-MLFLOW-WORKSPACE: uc1-rhoai<br/>x-mlflow-experiment-id"| mlflow
 
     subgraph rhoai["redhat-ods-applications"]

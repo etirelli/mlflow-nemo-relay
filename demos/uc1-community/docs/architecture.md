@@ -8,12 +8,12 @@ flowchart LR
 
     subgraph proc["Agent process"]
         api --> scope["Relay agent scope<br/>customer-lookup-request"]
-        scope --> graph["LangGraph agent<br/>create_agent + NemoRelayMiddleware"]
-        graph -->|"managed LLM call"| llm[("LLM<br/>OpenAI-compatible")]
-        graph -->|"managed tool call<br/>ssn=900-12-0001"| tool["lookup_customer"]
+        scope --> agent_graph["LangGraph agent<br/>create_agent + NemoRelayMiddleware"]
+        agent_graph -->|"managed LLM call"| llm[("LLM<br/>OpenAI-compatible")]
+        agent_graph -->|"managed tool call<br/>ssn=900-12-0001"| tool["lookup_customer"]
         tool --> db[("Synthetic records<br/>+ slow legacy shard")]
 
-        graph -. "lifecycle events<br/>(raw values)" .-> pii["Relay pii_redaction<br/>sanitize guardrails"]
+        agent_graph -. "lifecycle events<br/>(raw values)" .-> pii["Relay pii_redaction<br/>sanitize guardrails"]
         pii -. "sanitized events<br/>[REDACTED-SSN]" .-> otel["OTLP exporter<br/>(OpenInference projection)"]
         pii -. "sanitized events" .-> atof["ATOF file sink<br/>/app/telemetry"]
     end
