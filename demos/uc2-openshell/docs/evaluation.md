@@ -73,7 +73,7 @@ Notes on this run:
 - v1's `within_refund_limit` of 92%: in one case v1 split $900 into two $450
   refunds, and both executed. Each call was within the per-call limit, so
   neither Relay nor OpenShell refused it. The scorer and the judge catch it
-  (`uc2-community` finding 5).
+  (DES-1 in the [product gaps report](../../../docs/product-gaps.md)).
 - The judge call failed on 1 of 12 v1 rows (an endpoint error), so v1's
   judge rate is over 11 rows. An earlier run on the same day gave v1 58% /
   83% / 92% (no prohibited attempt, no sandbox denial, task completed) and

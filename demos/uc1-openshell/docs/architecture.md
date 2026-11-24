@@ -138,4 +138,4 @@ egress rule, and the **MLflow credential lives in the gateway config instead
 of the agent**. We did not use it here because headers are configured per
 gateway. Both sandboxes would then write to one experiment, and the
 redacted/baseline split would be lost. It is a strong option for the RHOAI
-permutation. See [product-gaps.md](product-gaps.md).
+permutation. See OSH-5 in the [product gaps report](../../../docs/product-gaps.md#nvidia-openshell).

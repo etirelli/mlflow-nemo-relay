@@ -55,7 +55,7 @@ authorization = "MLFLOW_OTLP_AUTHORIZATION"
 "x-mlflow-experiment-id" = "MLFLOW_OTLP_EXPERIMENT_ID"
 # One connection per export. OpenShell 0.1.9's L7 proxy drops the second request
 # on a kept-alive plain-HTTP connection (logged as ALLOWED, never forwarded), which
-# loses whole span batches. See docs/product-gaps.md.
+# loses whole span batches. See OSH-1 in the repo's docs/product-gaps.md.
 connection = "MLFLOW_OTLP_CONNECTION"
 
 [components.config.opentelemetry.endpoints.resource_attributes]

@@ -56,25 +56,22 @@ How to read it:
 - The policy check costs about 0.03–0.05 ms. Latency differences come from
   the LLM and from the extra turn a block causes, and vary between runs.
 
-## OpenShift AI Observability: what works, and the gaps we found
+## How the demo uses OpenShift AI Observability
 
-- **Works:**
-  - a `ServiceMonitor` labelled `monitoring.opendatahub.io/scrape: "true"`
-    gets the agents' `/metrics` into the RHOAI monitoring stack (through its
-    OpenTelemetry collector);
-  - container CPU and memory come from the cluster Prometheus, which the RHOAI
-    dashboards use too;
-  - "Observe & monitor → Dashboard" is turned on.
-- **Gaps (RHOAI 3.6.0-ea.2, details in [docs/product-gaps.md](docs/product-gaps.md)):**
-  1. **Security:** the stack's `data-science-thanos-querier-route` is
-     unauthenticated and public. It's restricted to an IP allowlist on this
-     cluster.
-  2. **Multi-tenancy:** user-workload series are relabeled to
-     `namespace=redhat-ods-monitoring`, so the tenant-scoped query returns
-     nothing. The evaluator needs a read grant in `redhat-ods-monitoring`,
-     which exposes every tenant's forwarded metrics.
-  3. **No container CPU or memory in the RHOAI stack itself.**
-  4. **Any pod can push OTLP to the collector**, unauthenticated.
+- A `ServiceMonitor` labelled `monitoring.opendatahub.io/scrape: "true"` gets the
+  agents' `/metrics` into the RHOAI monitoring stack, through its
+  OpenTelemetry collector.
+- Container CPU and memory come from the cluster Prometheus, which the RHOAI
+  dashboards also use.
+- "Observe & monitor → Dashboard" is turned on in the OpenShift AI dashboard.
+- Two workarounds for RHOAI 3.6.0-ea.2 are part of the setup:
+  - the evaluator gets a metrics read grant in `redhat-ods-monitoring`
+    (`openshift/monitoring-access.yaml`);
+  - the stack's Thanos route is restricted to an IP allowlist
+    ([observability-setup.md](docs/observability-setup.md), step 4).
+
+  The analysis is in the [product gaps report](../../docs/product-gaps.md)
+  (OBS-1 to OBS-9).
 
 ## Quick start
 
@@ -111,7 +108,7 @@ make demo          # scenarios, in-cluster policy comparison (Job), verification
 | [docs/configuration.md](docs/configuration.md) | `config.env`, templates and grants |
 | [docs/evaluation.md](docs/evaluation.md) | Rates, load, queries, the gate (RHOAI specifics) |
 | [docs/verification.md](docs/verification.md) | `make verify` (22 checks) and the offline tests |
-| [docs/product-gaps.md](docs/product-gaps.md) | OpenShift AI Observability findings |
+| [Product gaps report](../../docs/product-gaps.md) | OpenShift AI Observability findings (consolidated, repo root) |
 | [docs/troubleshooting.md](docs/troubleshooting.md) | Common problems |
 
 ## Layout
@@ -123,7 +120,7 @@ uc3-rhoai/
 ├── openshift/
 │   ├── template.yaml           # SAs, Roles, ConfigMaps, build, 3 policy Deployments + Services, ServiceMonitor
 │   ├── eval-job.yaml           # the policy comparison as an in-cluster Job
-│   └── monitoring-access.yaml  # evaluator read grant in redhat-ods-monitoring (see product gap 2)
+│   └── monitoring-access.yaml  # evaluator read grant in redhat-ods-monitoring (see OBS-2 in the product gaps report)
 ├── relay/plugins.toml          # Relay: OTLP -> MLflow in OpenShift AI (bearer token, workspace) + pii_redaction
 ├── agent/src/support_agent/    # same agent and policies as uc3-community; RHOAI auth; RHOAI metrics queries
 ├── tests/                      # offline: the three policies, RHOAI auth

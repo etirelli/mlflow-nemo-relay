@@ -98,7 +98,7 @@ See [docs/configuration.md](docs/configuration.md).
 | [docs/architecture.md](docs/architecture.md) | Data flow, MLflow workspaces and Kubernetes auth, token rotation, TLS |
 | [docs/configuration.md](docs/configuration.md) | `config.env`, template parameters, LLM choices |
 | [docs/verification.md](docs/verification.md) | The 12 checks and the offline tests |
-| [docs/product-gaps.md](docs/product-gaps.md) | Proposal gap 3 on OpenShift AI, and findings |
+| [Product gaps report](../../docs/product-gaps.md) | Proposal gap 3 on OpenShift AI, and findings (consolidated, repo root) |
 | [docs/troubleshooting.md](docs/troubleshooting.md) | Common problems |
 
 ## Layout

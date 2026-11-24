@@ -14,7 +14,7 @@ egress probe inside `uc2-agent-v2`, all into `./telemetry`.
 | # | Check | What it proves |
 |---|---|---|
 | 1 | The trace experiment has traces | — |
-| 2 | Every trace arrived complete (root span present) | No OTLP batch was lost through the sandbox proxy (product-gaps finding 1) |
+| 2 | Every trace arrived complete (root span present) | No OTLP batch was lost through the sandbox proxy (OSH-1 in the [product gaps report](../../../docs/product-gaps.md#nvidia-openshell)) |
 | 3 | Both agent versions are traced | Same experiment, same policies |
 | 4 | `GUARDRAIL` spans with allowed **and** rejected decisions | Relay decision export |
 | 5 | A rejection keeps the target, requested arguments, decision, reason and policy version | UC2 gap |

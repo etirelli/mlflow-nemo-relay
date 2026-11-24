@@ -101,7 +101,7 @@ tries the credit.
 | [docs/architecture.md](docs/architecture.md) | The two layers, the payments service, trace shapes, the LLM provider |
 | [docs/evaluation.md](docs/evaluation.md) | Dataset, scorers, LLM judge |
 | [docs/verification.md](docs/verification.md) | `make verify` (26 checks) and the offline tests |
-| [docs/product-gaps.md](docs/product-gaps.md) | What was validated, and findings for OpenShell, Relay and MLflow |
+| [Product gaps report](../../docs/product-gaps.md) | What was validated, and findings for OpenShell, Relay and MLflow (consolidated, repo root) |
 | [docs/troubleshooting.md](docs/troubleshooting.md) | Common problems |
 
 ## Layout

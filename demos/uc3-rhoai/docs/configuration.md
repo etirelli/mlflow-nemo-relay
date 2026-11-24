@@ -38,7 +38,7 @@ The policy versions themselves are code (`policy.py`), one Deployment each.
 
 A `Role` and `RoleBinding` that give `uc3-evaluator` `get pods.metrics.k8s.io`
 in `redhat-ods-monitoring`. This is needed because RHOAI 3.6 relabels
-user-workload series to that namespace (product-gaps finding 2). It's plain
+user-workload series to that namespace (OBS-2 in the repo's product gaps report). It's plain
 YAML, not a Template, because `oc process` drops `metadata.namespace`.
 
 Apply it with `make monitoring-access` (cluster admin). `make up` runs it.

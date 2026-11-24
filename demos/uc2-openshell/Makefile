@@ -56,7 +56,7 @@ UV_RUN := cd agent && uv run --quiet
 
 # $(call create_sandbox,<name>,<agent version>,<port>)
 # Note: --env values are visible to `openshell sandbox get`; the MLflow service
-# account password is demo-only (see docs/product-gaps.md).
+# account password is demo-only (see OSH-5 in the repo's docs/product-gaps.md).
 define create_sandbox
 	-@$(OPENSHELL) forward stop $(3) $(1) >/dev/null 2>&1
 	-@$(OPENSHELL) sandbox delete $(1) >/dev/null 2>&1

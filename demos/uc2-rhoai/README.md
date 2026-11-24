@@ -84,7 +84,7 @@ Templates. See [docs/configuration.md](docs/configuration.md).
 | [docs/evaluation.md](docs/evaluation.md) | The evaluation Job, dataset, scorers and LLM judge |
 | [docs/configuration.md](docs/configuration.md) | `config.env`, the templates, the evaluator Job |
 | [docs/verification.md](docs/verification.md) | `make verify` and the offline tests |
-| [docs/product-gaps.md](docs/product-gaps.md) | The UC2 product gaps on OpenShift AI, and findings |
+| [Product gaps report](../../docs/product-gaps.md) | The UC2 product gaps on OpenShift AI, and findings (consolidated, repo root) |
 | [docs/troubleshooting.md](docs/troubleshooting.md) | Common problems |
 
 ## Layout

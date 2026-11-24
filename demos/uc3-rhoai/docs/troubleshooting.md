@@ -19,7 +19,7 @@ DSCI monitoring patch.
   (`make monitoring-access`). Check it with
   `oc auth can-i get pods.metrics.k8s.io -n redhat-ods-monitoring --as=system:serviceaccount:<ns>:uc3-evaluator`.
 - **200 but empty:** you queried `?namespace=<project>`. RHOAI 3.6 relabels
-  workload series to `namespace=redhat-ods-monitoring` (product-gaps finding 2).
+  workload series to `namespace=redhat-ods-monitoring` (OBS-2 in the repo's product gaps report).
 - The first samples arrive after two 30-second scrape hops. Very short runs
   can end before them.
 
@@ -38,7 +38,7 @@ Allow port 8000 from that namespace.
 
 ## Target allocator logs `secrets is forbidden`
 
-That's product-gaps finding 5. It's harmless for ServiceMonitors without
+That's OBS-5 in the repo's product gaps report. It's harmless for ServiceMonitors without
 TLS or auth secrets.
 
 ## `make port-forward`: ports in use

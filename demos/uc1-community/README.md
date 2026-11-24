@@ -79,7 +79,7 @@ Stop with `make down`. `make clean` also deletes the MLflow data.
 | [docs/architecture.md](docs/architecture.md) | How the pieces fit: data flow, redaction boundary, auth and routing |
 | [docs/configuration.md](docs/configuration.md) | LLM options, environment variables, the Relay policy explained |
 | [docs/verification.md](docs/verification.md) | The automated checks, the offline test suite, and the mapping to the success criteria |
-| [docs/product-gaps.md](docs/product-gaps.md) | What we validated against the proposal's product gaps, and the findings |
+| [Product gaps report](../../docs/product-gaps.md) | What we validated against the proposal's product gaps, and the findings (consolidated, repo root) |
 | [docs/troubleshooting.md](docs/troubleshooting.md) | Common problems and fixes |
 
 ## Layout

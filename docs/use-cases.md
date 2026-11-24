@@ -37,7 +37,7 @@ error context. The synthetic SSN is absent from exported telemetry, and the
 permitted lookup still works.
 
 ➡️ Implemented in [`demos/uc1-community`](../demos/uc1-community). Its
-[product-gap findings](../demos/uc1-community/docs/product-gaps.md) record what
+[product-gap findings](product-gaps.md) (consolidated for all demos) record what
 we validated.
 
 ---

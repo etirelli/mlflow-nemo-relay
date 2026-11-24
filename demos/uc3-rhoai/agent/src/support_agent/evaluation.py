@@ -253,7 +253,7 @@ def load(agent: Agent, rounds: int, workers: int) -> None:
 PROM_TOKEN_FILE = os.environ.get("PROMETHEUS_TOKEN_FILE", "")
 # The RHOAI stack relabels user-workload series to namespace="redhat-ods-monitoring" (the
 # collector's namespace), so its namespace proxy is queried with that namespace, and the
-# agents are selected by k8s_namespace_name instead (see docs/product-gaps.md).
+# agents are selected by k8s_namespace_name instead (see OBS-2 in the repo's docs/product-gaps.md).
 PROM_NAMESPACE = os.environ.get("PROMETHEUS_NAMESPACE", "")
 CLUSTER_PROM_NAMESPACE = os.environ.get("CLUSTER_PROMETHEUS_NAMESPACE", "")
 PROM_CA = os.environ.get("PROMETHEUS_CA_FILE") or True

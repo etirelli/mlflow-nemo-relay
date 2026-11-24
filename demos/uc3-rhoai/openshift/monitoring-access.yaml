@@ -13,7 +13,7 @@
 # in redhat-ods-monitoring. This grant lets the evaluator read them.
 #
 # Caveat (product gap): it lets the evaluator read the forwarded metrics of EVERY project that the
-# RHOAI stack scrapes, not only its own. See docs/product-gaps.md.
+# RHOAI stack scrapes, not only its own. See OBS-2 in the repo's docs/product-gaps.md.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:

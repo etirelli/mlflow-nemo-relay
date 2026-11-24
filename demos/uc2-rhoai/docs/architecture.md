@@ -106,7 +106,7 @@ This is the same wiring as [uc1-rhoai](../../uc1-rhoai/docs/architecture.md):
 | Identity | Role | Allowed |
 |---|---|---|
 | `uc2-agent` (both agent versions) | `uc2-trace-writer` | `get`, `update` on experiment `uc2-rhoai-refund-agent` only (`resourceNames`) |
-| `uc2-evaluator` (the evaluation Job) | `uc2-evaluator` | `get`, `update` on experiments in the project, plus `get`, `list`, `create`, `update` on datasets. It isn't name-scoped because of an auth-plugin bug with artifact paths ([product-gaps](product-gaps.md)). |
+| `uc2-evaluator` (the evaluation Job) | `uc2-evaluator` | `get`, `update` on experiments in the project, plus `get`, `list`, `create`, `update` on datasets. It isn't name-scoped because of an auth-plugin bug with artifact paths (RMF-1 in the [product gaps report](../../../docs/product-gaps.md#mlflow-in-openshift-ai)). |
 | you (`make bootstrap`, `make verify`) | project admin | Create the experiments; read everything back |
 
 ## Two agents, one image, one policy

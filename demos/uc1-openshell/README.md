@@ -22,8 +22,8 @@ LangGraph agent runs inside an **NVIDIA OpenShell** sandbox.
 > the Homebrew gateway and the Podman driver (rootless Podman 5, Apple M2, VM
 > kernel 6.9), native Ollama with `qwen2.5:0.5b`. Result: `make demo` passes
 > 16/16, and `make test` passes 8 offline tests. Docker Desktop and colima
-> have not been tried. See
-> [docs/product-gaps.md](docs/product-gaps.md#openshell-integration-status).
+> have not been tried. Findings are in the consolidated
+> [product gaps report](../../docs/product-gaps.md#nvidia-openshell).
 
 ## What the demo shows
 
@@ -103,7 +103,7 @@ collected evidence.
 | [docs/architecture.md](docs/architecture.md) | The three control layers, the data flow, and the sandbox boundary |
 | [docs/configuration.md](docs/configuration.md) | LLM options, the OpenShell policy and provider, the Relay policy, variables |
 | [docs/verification.md](docs/verification.md) | The automated checks and the offline test suite |
-| [docs/product-gaps.md](docs/product-gaps.md) | Validation status and findings for Relay, MLflow and OpenShell |
+| [Product gaps report](../../docs/product-gaps.md) | Validation status and findings for Relay, MLflow and OpenShell (consolidated, repo root) |
 | [docs/troubleshooting.md](docs/troubleshooting.md) | Common problems and fixes |
 
 ## Layout

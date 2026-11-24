@@ -23,6 +23,10 @@ product stack. Each folder runs on its own and has its own documentation.
 | [`demos/uc3-community`](demos/uc3-community) | **UC3** Validate guardrail changes before rollout: the same agent under three Relay refund policies (production, a per-request budget, an over-strict limit); MLflow compares correct blocks, false blocks, prohibited actions allowed and task completion, Prometheus adds latency and resources under equivalent load, and a rollout gate promotes or rejects each candidate | Upstream MLflow 3.17 + NeMo Relay 0.11 + Prometheus 3.5 + LangGraph, on Podman/Docker; any OpenAI-compatible LLM | ✅ Ready (validated live 2026-11-24, 20/20) |
 | [`demos/uc3-rhoai`](demos/uc3-rhoai) | **UC3** on Red Hat OpenShift AI: the three-policy comparison as an in-cluster Job in the project's MLflow workspace, with latency from **OpenShift AI Observability** (RHOAI monitoring stack) and CPU/memory from cluster monitoring; rollout gate per candidate | MLflow and OpenShift AI Observability (Tech Preview) in OpenShift AI 3.6 + NeMo Relay 0.11 on OpenShift 4.22; any OpenAI-compatible LLM (configured locally) | ✅ Ready (validated live 2026-11-24, 22/22) |
 
+**Findings:** what the demos validated against the proposal's product gaps, and every
+product finding (NeMo Relay, MLflow, MLflow in OpenShift AI, OpenShift AI Observability,
+OpenShell), are consolidated in [docs/product-gaps.md](docs/product-gaps.md).
+
 Naming convention: `uc<N>-<stack>`, where `<stack>` is `community` (upstream
 projects only, easiest to package), `openshell` (community stack with the agent
 in an OpenShell sandbox) or `rhoai` (productized Red Hat AI).
@@ -46,6 +50,7 @@ Then follow the [UC1 README](demos/uc1-community/README.md) and the
 .
 ├── README.md                 # this file: demo matrix
 ├── docs/use-cases.md         # the three joint use cases, and how the demos map to them
+├── docs/product-gaps.md      # consolidated product-gap validation and findings (all demos)
 └── demos/
     ├── uc1-community/        # UC1 on upstream MLflow + NeMo Relay (see its README)
     ├── uc1-openshell/        # UC1 with the agent in an NVIDIA OpenShell sandbox

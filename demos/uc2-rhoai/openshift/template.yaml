@@ -115,7 +115,7 @@ objects:
       # artifacts through /mlflow-artifacts/artifacts/workspaces/<ns>/<experiment_id>/..., and
       # the OpenShift AI MLflow auth plugin (3.6.0-ea.2) only resolves the experiment from
       # paths that *start* with the id. The name is unresolved, so a name-scoped grant is
-      # denied (403). See docs/product-gaps.md. Scope stays this namespace (= workspace).
+      # denied (403). See RMF-1 in the repo's docs/product-gaps.md. Scope stays this namespace (= workspace).
       - apiGroups: ["mlflow.kubeflow.org"]
         resources: ["experiments"]
         verbs: ["get", "update"]

@@ -93,8 +93,8 @@ Things to know:
 
 > **Note on `--env`:** OpenShell treats `--env` values as non-secret
 > configuration. The MLflow service-account password is demo-only. See
-> [product-gaps.md](product-gaps.md) for the options to remove it from the
-> sandbox.
+> OSH-5 in the [product gaps report](../../../docs/product-gaps.md#nvidia-openshell) for the
+> options to remove it from the sandbox.
 
 ### Makefile / `.env`
 

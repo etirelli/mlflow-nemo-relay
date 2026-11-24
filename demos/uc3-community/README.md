@@ -88,7 +88,7 @@ LLM_PROVIDER=scripted`. It's deterministic, and the judge is skipped.
 | [docs/architecture.md](docs/architecture.md) | Policy versions, the per-request budget, trace shapes, the comparison and the gate |
 | [docs/evaluation.md](docs/evaluation.md) | Labeled set, the four rates, load, Prometheus queries, the gate |
 | [docs/verification.md](docs/verification.md) | `make verify` (20 checks) and the offline tests |
-| [docs/product-gaps.md](docs/product-gaps.md) | What was validated, and findings for Relay and MLflow |
+| [Product gaps report](../../docs/product-gaps.md) | What was validated, and findings for Relay and MLflow (consolidated, repo root) |
 | [docs/troubleshooting.md](docs/troubleshooting.md) | Common problems |
 
 ## Layout

@@ -66,7 +66,7 @@ trace shapes are described in
    `policy="vN",k8s_namespace_name="uc3-rhoai"`. That needs
    `get pods.metrics.k8s.io` in `redhat-ods-monitoring`
    (`openshift/monitoring-access.yaml`, applied by `make monitoring-access`).
-   The grant isn't tenant-scoped: product-gaps finding 2.
+   The grant isn't tenant-scoped: OBS-2 in the [product gaps report](../../../docs/product-gaps.md).
 
 **Container CPU and memory:** the RHOAI stack doesn't collect them. The
 evaluation queries the cluster Prometheus through `thanos-querier`'s tenancy

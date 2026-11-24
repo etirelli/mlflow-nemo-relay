@@ -87,7 +87,7 @@ agents imitate v1 and v2, and `make eval` skips the judge.
 | [docs/architecture.md](docs/architecture.md) | Guardrail mechanics, decision telemetry, the v1 → v2 change |
 | [docs/evaluation.md](docs/evaluation.md) | Dataset, scorers, LLM judge, reading the results in MLflow |
 | [docs/verification.md](docs/verification.md) | `make verify` (16 checks) and the offline tests |
-| [docs/product-gaps.md](docs/product-gaps.md) | The proposal's UC2 product gaps: what was validated, and findings |
+| [Product gaps report](../../docs/product-gaps.md) | The proposal's UC2 product gaps: what was validated, and findings (consolidated, repo root) |
 | [docs/troubleshooting.md](docs/troubleshooting.md) | Common problems |
 
 ## Layout

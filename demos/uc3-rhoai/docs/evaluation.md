@@ -28,7 +28,7 @@ the `uc3-evaluator` service account. For v1, v2 and v3 in turn it:
 | `memory_max_mb` | Cluster Prometheus | `max(max_over_time(container_memory_working_set_bytes{…}[W])) / 1048576` |
 
 The `k8s_namespace_name` selector, and querying the RHOAI stack in
-`redhat-ods-monitoring`, are workarounds for product-gaps finding 2.
+`redhat-ods-monitoring`, are workarounds for OBS-2 in the [product gaps report](../../../docs/product-gaps.md).
 
 ## Live run, 2026-11-24 (GLM 5.3)
 

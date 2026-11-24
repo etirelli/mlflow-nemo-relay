@@ -44,8 +44,8 @@ On prohibited requests, correct blocks plus prohibited allowed can be less
 than 100%. The remainder are requests the agent declined on its own, without
 reaching the guardrail.
 
-MLflow scorers can't be restricted to a slice of rows (product-gaps finding
-5), so the runner computes these rates itself and logs them as run metrics.
+MLflow scorers can't be restricted to a slice of rows (MLF-5 in the
+[product gaps report](../../../docs/product-gaps.md#mlflow-upstream)), so the runner computes these rates itself and logs them as run metrics.
 Per-row drill-down comes from the scorers:
 
 | Scorer | Type | Passes when |
