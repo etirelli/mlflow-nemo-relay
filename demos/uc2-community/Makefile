@@ -28,7 +28,7 @@ scenarios: ## Send the demo scenarios to both agent versions
 eval: ## Evaluate v1 and v2 on the regression dataset (code scorers + LLM judge), log to MLflow
 	cd agent && MLFLOW_TRACKING_URI=http://localhost:$(MLFLOW_PORT) \
 	  MLFLOW_TRACKING_USERNAME=admin MLFLOW_TRACKING_PASSWORD=$(MLFLOW_ADMIN_PASSWORD) \
-	  JUDGE_BASE_URL=$(LLM_BASE_URL) JUDGE_MODEL=$(LLM_MODEL) OPENAI_API_KEY=$(LLM_API_KEY) \
+	  JUDGE_BASE_URL=$(LLM_BASE_URL) JUDGE_MODEL=$(LLM_MODEL) OPENAI_API_KEY="$$LLM_API_KEY" \
 	  MLFLOW_GENAI_EVAL_MAX_WORKERS=$(or $(EVAL_WORKERS),4) MLFLOW_DISABLE_AGENT_HINT=1 \
 	  uv run --quiet --extra eval python -m support_agent.evaluation \
 	  --agent v1=http://localhost:$(V1_AGENT_PORT) --agent v2=http://localhost:$(V2_AGENT_PORT) \
