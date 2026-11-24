@@ -1,0 +1,8 @@
+# Synthetica payments service (refunds + credits + ledger). Standard library only.
+FROM docker.io/library/python:3.12-slim
+ENV PYTHONUNBUFFERED=1 LEDGER_FILE=/data/ledger.jsonl PORT=8090
+COPY app.py /opt/payments/app.py
+RUN useradd --uid 1001 --create-home payments && install -d -o payments /data
+USER 1001
+EXPOSE 8090
+CMD ["python", "/opt/payments/app.py"]

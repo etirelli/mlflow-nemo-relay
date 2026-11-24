@@ -1,0 +1,37 @@
+# OpenShell provider profile for the demo's OpenAI-compatible LLM endpoint.
+#
+# Rendered by `make provider` from .env (LLM_BASE_URL host) into
+# telemetry/provider-llm.yaml, so the endpoint is never hard-coded here.
+#
+# What it does:
+#   * the API key stays on the laptop: the sandbox only sees a placeholder in
+#     LLM_API_KEY, and the supervisor substitutes the real key on requests to
+#     this host (Authorization: Bearer ...);
+#   * only POST /v1/chat/completions is allowed, and only from the agent's
+#     Python interpreter;
+#   * the profile contributes its own network rule, so policy.yaml stays unchanged.
+
+id: uc2-llm
+display_name: OpenAI-compatible LLM (UC2 OpenShell demo)
+description: Chat completions endpoint for the UC2 support agent
+category: inference
+inference_capable: true
+credentials:
+  - name: api_key
+    description: API key of the LLM endpoint
+    env_vars: [LLM_API_KEY]
+    required: true
+    auth_style: bearer
+    header_name: authorization
+discovery:
+  credentials: [api_key]
+endpoints:
+  - host: ${LLM_HOST}
+    port: ${LLM_PORT}
+    protocol: rest
+    enforcement: enforce
+    rules:
+      - allow:
+          method: POST
+          path: ${LLM_PATH_PREFIX}/chat/completions
+binaries: [/usr/local/bin/python3.12]

@@ -1,0 +1,88 @@
+# OpenShell sandbox policy for the UC2 support agent (both versions).
+#
+#   make lint     # openshell-prover check; OpenShell 0.1.9 has no `policy lint`
+#   openshell sandbox create --policy openshell/policy.yaml ...
+#   openshell policy set <sandbox> --policy openshell/policy.yaml --wait   # live update
+#
+# Two layers of control over money movement in this demo:
+#   NeMo Relay  -> WHICH TOOL CALLS may run: refund-limit-v1 rejects issue_refund
+#                  above $500 before the tool executes (support_agent/policy.py)
+#   OpenShell   -> WHICH NETWORK REQUESTS the agent process may make: on the
+#                  payments service, only POST /v1/refunds
+#   MLflow      -> the evidence: Relay GUARDRAIL decisions and OpenShell denials,
+#                  as two distinct shapes in the same agent trace
+#
+# The layers are independent. Relay's policy is keyed on the issue_refund tool,
+# so a tool it does not know (apply_account_credit, which posts to
+# /v1/credits) passes Relay; OpenShell denies the request at the sandbox
+# boundary, because the payments rule allows only the refunds path. Everything
+# not listed below is denied (PyPI, the internet, the ledger, the credits API).
+#
+# The LLM endpoint is NOT in this file: it comes from the provider profile in
+# openshell/providers/ (rendered from .env by `make provider`), which adds its
+# own endpoint rule and injects the API key outside the sandbox.
+#
+# filesystem_policy, landlock and process apply at sandbox start.
+# network_policies are live: `openshell policy set` / `policy update` hot-reloads them.
+
+version: 1
+
+filesystem_policy:
+  include_workdir: true
+  read_only:
+    - /usr          # Python interpreter and site-packages (agent code, Relay, LangGraph)
+    - /lib
+    - /etc
+    - /app          # Relay telemetry policy file
+    - /proc
+    - /dev/urandom
+    - /var/log
+  read_write:
+    - /sandbox      # workspace; Relay's local ATOF event file lives in /sandbox/telemetry
+    - /tmp          # rendered Relay plugin config
+    - /dev/null
+
+landlock:
+  compatibility: best_effort
+
+network_policies:
+  # Synthetica payments service on the laptop (compose, port 8090).
+  # L7-enforced: the agent may issue refunds, nothing else. It cannot post
+  # account credits, read the ledger, or call any other payments API. A denied
+  # request gets `403 {"error":"policy_denied","policy":"payments_refunds",...}`.
+  payments_refunds:
+    name: payments-refunds-only
+    endpoints:
+      - host: host.openshell.internal
+        port: 8090
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow:
+              method: POST
+              path: /v1/refunds
+    binaries:
+      # Scripts run as their interpreter; list the real path, not a symlink.
+      - path: /usr/local/bin/python3.12
+
+  # MLflow on the laptop, published by compose on port 5000.
+  # The agent may export traces and resolve its experiment, nothing else.
+  mlflow_tracking:
+    name: mlflow-otlp-export
+    endpoints:
+      - host: host.openshell.internal
+        port: 5000
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow:
+              method: POST
+              path: /v1/traces
+          - allow:
+              method: GET
+              path: /api/2.0/mlflow/experiments/get-by-name
+          - allow:
+              method: POST
+              path: /api/2.0/mlflow/experiments/create
+    binaries:
+      - path: /usr/local/bin/python3.12
