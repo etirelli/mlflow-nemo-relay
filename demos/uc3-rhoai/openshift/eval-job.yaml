@@ -1,0 +1,108 @@
+# UC3 policy comparison as an in-cluster Job (`make eval` creates one per run).
+#
+# For each policy service (v1, v2, v3), one at a time: MLflow GenAI evaluation on the
+# labeled set plus LOAD_ROUNDS more rounds at the same concurrency, then latency from the
+# OpenShift AI monitoring stack and CPU/memory from the cluster Prometheus over that
+# window, and a rollout decision per candidate. Authenticates to MLflow and to both
+# metrics endpoints as the uc3-evaluator service account (namespace-scoped); the judge's
+# API key comes from the same Secret as the agents', so it never leaves the cluster.
+apiVersion: template.openshift.io/v1
+kind: Template
+metadata:
+  name: uc3-rhoai-evaluation
+parameters:
+  - name: NAMESPACE
+    required: true
+  - name: RUN_ID
+    description: Suffix for the Job name
+    required: true
+  - name: LLM_API_KEY_SECRET
+    required: true
+  - name: LLM_API_KEY_SECRET_KEY
+    value: api-key
+  - name: MLFLOW_TRACKING_URI
+    value: https://mlflow.redhat-ods-applications.svc:8443/mlflow
+  - name: EVAL_EXPERIMENT
+    value: uc3-rhoai-policy-validation-eval
+  - name: EVAL_DATASET
+    value: uc3-refund-policy-labeled-set
+  - name: PROMETHEUS_URL
+    description: OpenShift AI monitoring stack, namespace proxy route (https://data-science-prometheus-route-...)
+    required: true
+  - name: CLUSTER_PROMETHEUS_URL
+    description: Cluster Prometheus (thanos-querier tenancy port) for container CPU/memory
+    value: https://thanos-querier.openshift-monitoring.svc:9092
+  - name: LOAD_ROUNDS
+    value: "1"
+  - name: EVAL_ARGS
+    description: Extra arguments, e.g. --no-judge
+    value: ""
+  - name: EVAL_WORKERS
+    value: "4"
+objects:
+  - apiVersion: batch/v1
+    kind: Job
+    metadata:
+      name: "uc3-eval-${RUN_ID}"
+      labels: {app.kubernetes.io/part-of: uc3-rhoai, app: uc3-eval}
+    spec:
+      backoffLimit: 0
+      ttlSecondsAfterFinished: 86400
+      template:
+        metadata:
+          labels: {app.kubernetes.io/part-of: uc3-rhoai, app: uc3-eval}
+        spec:
+          serviceAccountName: uc3-evaluator
+          restartPolicy: Never
+          containers:
+            - name: eval
+              image: "image-registry.openshift-image-registry.svc:5000/${NAMESPACE}/uc3-agent:latest"
+              imagePullPolicy: Always
+              command: ["sh", "-c"]
+              args:
+                - >-
+                  exec python -m support_agent.evaluation
+                  --policy v1=http://uc3-agent-policy-v1:8000 --policy v2=http://uc3-agent-policy-v2:8000
+                  --policy v3=http://uc3-agent-policy-v3:8000 --load-rounds ${LOAD_ROUNDS} ${EVAL_ARGS}
+              env:
+                - name: JUDGE_BASE_URL
+                  valueFrom: {configMapKeyRef: {name: uc3-llm, key: LLM_BASE_URL}}
+                - name: JUDGE_MODEL
+                  valueFrom: {configMapKeyRef: {name: uc3-llm, key: LLM_MODEL}}
+                - name: REFUND_LIMIT
+                  valueFrom: {configMapKeyRef: {name: uc3-llm, key: REFUND_LIMIT}}
+                - name: OPENAI_API_KEY
+                  valueFrom: {secretKeyRef: {name: "${LLM_API_KEY_SECRET}", key: "${LLM_API_KEY_SECRET_KEY}"}}
+                - {name: MLFLOW_TRACKING_URI, value: "${MLFLOW_TRACKING_URI}"}
+                - {name: MLFLOW_WORKSPACE, value: "${NAMESPACE}"}
+                - {name: MLFLOW_TRACKING_TOKEN_FILE, value: /var/run/secrets/kubernetes.io/serviceaccount/token}
+                - {name: MLFLOW_TRACKING_SERVER_CERT_PATH, value: /etc/uc3/service-ca/service-ca.crt}
+                - {name: EVAL_EXPERIMENT, value: "${EVAL_EXPERIMENT}"}
+                - {name: EVAL_DATASET, value: "${EVAL_DATASET}"}
+                - {name: MLFLOW_GENAI_EVAL_MAX_WORKERS, value: "${EVAL_WORKERS}"}
+                - {name: MLFLOW_DISABLE_AGENT_HINT, value: "1"}
+                # OpenShift AI Observability, namespace-scoped with the same SA token.
+                - {name: PROMETHEUS_URL, value: "${PROMETHEUS_URL}"}
+                # RHOAI 3.6 relabels user series to the collector's namespace: query that
+                # namespace through the proxy, select this demo's pods by k8s_namespace_name.
+                - {name: PROMETHEUS_NAMESPACE, value: redhat-ods-monitoring}
+                - name: AGENT_METRICS_SELECTOR
+                  value: 'policy="{policy}",k8s_namespace_name="${NAMESPACE}"'
+                - {name: PROMETHEUS_TOKEN_FILE, value: /var/run/secrets/kubernetes.io/serviceaccount/token}
+                - {name: CLUSTER_PROMETHEUS_URL, value: "${CLUSTER_PROMETHEUS_URL}"}
+                - {name: CLUSTER_PROMETHEUS_CA_FILE, value: /etc/uc3/service-ca/service-ca.crt}
+                - {name: CLUSTER_PROMETHEUS_NAMESPACE, value: "${NAMESPACE}"}
+                - {name: HOME, value: /tmp}
+              volumeMounts:
+                - {name: service-ca, mountPath: /etc/uc3/service-ca, readOnly: true}
+              resources:
+                requests: {cpu: 200m, memory: 512Mi}
+                limits: {memory: 1536Mi}
+              securityContext:
+                allowPrivilegeEscalation: false
+                runAsNonRoot: true
+                capabilities: {drop: [ALL]}
+                seccompProfile: {type: RuntimeDefault}
+          volumes:
+            - name: service-ca
+              configMap: {name: uc3-service-ca}

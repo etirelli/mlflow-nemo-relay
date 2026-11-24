@@ -1,0 +1,36 @@
+# Read access for the UC3 evaluation Job to the OpenShift AI monitoring stack (cluster admin applies).
+#
+#   sed "s/__NAMESPACE__/uc3-rhoai/" openshift/monitoring-access.yaml | oc apply -f -
+#   (make monitoring-access)
+#
+# Plain YAML on purpose, not an OpenShift Template: `oc process` drops metadata.namespace, and
+# these objects must live in redhat-ods-monitoring, not in the demo project.
+#
+# Why it's needed: in RHOAI 3.6 the monitoring stack's final scrape relabels every user-workload
+# series to namespace="redhat-ods-monitoring" (the collector's namespace; the project is kept in
+# exported_namespace / k8s_namespace_name). The stack's namespace proxy therefore only serves those
+# series for ?namespace=redhat-ods-monitoring, which it authorizes with `get pods.metrics.k8s.io`
+# in redhat-ods-monitoring. This grant lets the evaluator read them.
+#
+# Caveat (product gap): it lets the evaluator read the forwarded metrics of EVERY project that the
+# RHOAI stack scrapes, not only its own. See docs/product-gaps.md.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: uc3-rhoai-metrics-reader
+  namespace: redhat-ods-monitoring
+  labels: {app.kubernetes.io/part-of: uc3-rhoai}
+rules:
+  - apiGroups: ["metrics.k8s.io"]
+    resources: ["pods"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: uc3-rhoai-metrics-reader
+  namespace: redhat-ods-monitoring
+  labels: {app.kubernetes.io/part-of: uc3-rhoai}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: uc3-rhoai-metrics-reader}
+subjects:
+  - {kind: ServiceAccount, name: uc3-evaluator, namespace: __NAMESPACE__}

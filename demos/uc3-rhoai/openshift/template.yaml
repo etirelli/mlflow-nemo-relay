@@ -1,0 +1,426 @@
+# UC3 on Red Hat OpenShift AI: the same agent under three NeMo Relay refund policy versions,
+# compared in MLflow in OpenShift AI with latency/resources from OpenShift AI Observability.
+#
+# Nothing cluster-specific lives here: every endpoint, model and secret name is a
+# parameter, supplied from your local config.env (see config.env.example):
+#
+#   oc process -f openshift/template.yaml --param-file=config.env | oc apply -n <namespace> -f -
+#
+# The Makefile does this for you (`make deploy`).
+apiVersion: template.openshift.io/v1
+kind: Template
+metadata:
+  name: uc3-rhoai-support-agent
+  annotations:
+    description: >-
+      UC3 demo: validate NeMo Relay policy changes before rollout. The same agent runs under
+      three refund policy versions; MLflow in OpenShift AI compares them and OpenShift AI
+      Observability adds latency and resource context.
+    tags: mlflow,nemo-relay,langgraph,demo
+parameters:
+  - name: NAMESPACE
+    description: Namespace (project) for the demo. It is also the MLflow workspace.
+    required: true
+  - name: LLM_BASE_URL
+    description: OpenAI-compatible base URL of the LLM, e.g. https://host/v1
+    required: true
+  - name: LLM_MODEL
+    description: Model id as listed by GET <LLM_BASE_URL>/models
+    required: true
+  - name: LLM_API_KEY_SECRET
+    description: Name of an existing Secret in NAMESPACE that holds the LLM API key
+    required: true
+  - name: LLM_API_KEY_SECRET_KEY
+    description: Key inside that Secret
+    value: api-key
+  - name: LLM_PROVIDER
+    description: "'openai' (any OpenAI-compatible endpoint) or 'scripted' (no LLM)"
+    value: openai
+  - name: MLFLOW_TRACKING_URI
+    description: MLflow as seen from inside the cluster (OpenShift AI service, with the /mlflow prefix)
+    value: https://mlflow.redhat-ods-applications.svc:8443/mlflow
+  - name: MLFLOW_OTLP_ENDPOINT
+    description: >-
+      MLflow OTLP trace endpoint. Empty = derived from MLFLOW_TRACKING_URI's scheme and host
+      plus /v1/traces (the OTLP route is not under the /mlflow prefix).
+    value: ""
+  - name: MLFLOW_PUBLIC_URI
+    description: Browser-facing MLflow URL (OpenShift AI gateway), used for links in the chat UI
+    required: true
+  - name: TRACE_EXPERIMENT
+    description: Experiment for the agents' traces (all policy versions)
+    value: uc3-rhoai-policy-validation
+  - name: EVAL_EXPERIMENT
+    description: Experiment for the evaluation runs (one per policy) and the labeled dataset
+    value: uc3-rhoai-policy-validation-eval
+  - name: EVAL_DATASET
+    value: uc3-refund-policy-labeled-set
+  - name: REFUND_LIMIT
+    description: The business rule the evaluation labels follow (USD per customer request)
+    value: "500"
+  - name: TOOL_TIMEOUT_SECONDS
+    value: "2.0"
+  - name: POLICY_V1_LOCAL_PORT
+    description: Local ports of `make port-forward` for the three policy services (chat UI toggle)
+    value: "8000"
+  - name: POLICY_V2_LOCAL_PORT
+    value: "8001"
+  - name: POLICY_V3_LOCAL_PORT
+    value: "8002"
+
+objects:
+  # --- Identity and least-privilege access to MLflow ---------------------------------------
+  - apiVersion: v1
+    kind: ServiceAccount
+    metadata:
+      name: uc3-agent
+      labels: {app.kubernetes.io/part-of: uc3-rhoai}
+
+  # MLflow in OpenShift AI authorizes each request with a SelfSubjectAccessReview on
+  # experiments.mlflow.kubeflow.org in the workspace (namespace). Both agent versions may
+  # read and write traces to the trace experiment only: no create, no other experiments.
+  - apiVersion: rbac.authorization.k8s.io/v1
+    kind: Role
+    metadata:
+      name: uc3-trace-writer
+      labels: {app.kubernetes.io/part-of: uc3-rhoai}
+    rules:
+      - apiGroups: ["mlflow.kubeflow.org"]
+        resources: ["experiments"]
+        verbs: ["get", "update"]
+        resourceNames: ["${TRACE_EXPERIMENT}"]
+
+  - apiVersion: rbac.authorization.k8s.io/v1
+    kind: RoleBinding
+    metadata:
+      name: uc3-trace-writer
+      labels: {app.kubernetes.io/part-of: uc3-rhoai}
+    roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: uc3-trace-writer}
+    subjects:
+      - {kind: ServiceAccount, name: uc3-agent, namespace: "${NAMESPACE}"}
+
+  # The evaluation Job's identity: writes evaluation runs, traces, assessments and the
+  # labeled dataset to the evaluation experiment, and reads this namespace's metrics from
+  # OpenShift AI Observability. It has no access to the agents' traces.
+  - apiVersion: v1
+    kind: ServiceAccount
+    metadata:
+      name: uc3-evaluator
+      labels: {app.kubernetes.io/part-of: uc3-rhoai}
+
+  - apiVersion: rbac.authorization.k8s.io/v1
+    kind: Role
+    metadata:
+      name: uc3-evaluator
+      labels: {app.kubernetes.io/part-of: uc3-rhoai}
+    rules:
+      # Not restricted with resourceNames, unlike the agents' Role: evaluation uploads trace
+      # artifacts through /mlflow-artifacts/artifacts/workspaces/<ns>/<experiment_id>/..., and
+      # the OpenShift AI MLflow auth plugin (3.6.0-ea.2) only resolves the experiment from
+      # paths that *start* with the id. The name is unresolved, so a name-scoped grant is
+      # denied (403). See docs/product-gaps.md. Scope stays this namespace (= workspace).
+      - apiGroups: ["mlflow.kubeflow.org"]
+        resources: ["experiments"]
+        verbs: ["get", "update"]
+      - apiGroups: ["mlflow.kubeflow.org"]
+        resources: ["datasets"]
+        verbs: ["get", "list", "create", "update"]
+
+  - apiVersion: rbac.authorization.k8s.io/v1
+    kind: RoleBinding
+    metadata:
+      name: uc3-evaluator
+      labels: {app.kubernetes.io/part-of: uc3-rhoai}
+    roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: uc3-evaluator}
+    subjects:
+      - {kind: ServiceAccount, name: uc3-evaluator, namespace: "${NAMESPACE}"}
+
+  # Namespace-scoped metrics: the RHOAI monitoring stack's namespace proxy authorizes
+  # `get pods.metrics.k8s.io` in the namespace; the cluster thanos-querier tenancy port
+  # authorizes `get pods`. Both only return series of this namespace.
+  - apiVersion: rbac.authorization.k8s.io/v1
+    kind: Role
+    metadata:
+      name: uc3-metrics-reader
+      labels: {app.kubernetes.io/part-of: uc3-rhoai}
+    rules:
+      - apiGroups: ["metrics.k8s.io"]
+        resources: ["pods"]
+        verbs: ["get", "list"]
+      - apiGroups: [""]
+        resources: ["pods"]
+        verbs: ["get", "list"]
+
+  - apiVersion: rbac.authorization.k8s.io/v1
+    kind: RoleBinding
+    metadata:
+      name: uc3-metrics-reader
+      labels: {app.kubernetes.io/part-of: uc3-rhoai}
+    roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: uc3-metrics-reader}
+    subjects:
+      - {kind: ServiceAccount, name: uc3-evaluator, namespace: "${NAMESPACE}"}
+
+  # OpenShift injects the service CA bundle (signs mlflow.redhat-ods-applications.svc).
+  - apiVersion: v1
+    kind: ConfigMap
+    metadata:
+      name: uc3-service-ca
+      labels: {app.kubernetes.io/part-of: uc3-rhoai}
+      annotations:
+        service.beta.openshift.io/inject-cabundle: "true"
+
+  # --- LLM configuration (non-secret) --------------------------------------------------------
+  - apiVersion: v1
+    kind: ConfigMap
+    metadata:
+      name: uc3-llm
+      labels: {app.kubernetes.io/part-of: uc3-rhoai}
+    data:
+      LLM_PROVIDER: "${LLM_PROVIDER}"
+      LLM_BASE_URL: "${LLM_BASE_URL}"
+      LLM_MODEL: "${LLM_MODEL}"
+      REFUND_LIMIT: "${REFUND_LIMIT}"
+
+  # --- In-cluster image build (no external registry) -----------------------------------------
+  - apiVersion: image.openshift.io/v1
+    kind: ImageStream
+    metadata:
+      name: uc3-agent
+      labels: {app.kubernetes.io/part-of: uc3-rhoai}
+
+  - apiVersion: build.openshift.io/v1
+    kind: BuildConfig
+    metadata:
+      name: uc3-agent
+      labels: {app.kubernetes.io/part-of: uc3-rhoai}
+    spec:
+      source: {type: Binary}
+      strategy:
+        type: Docker
+        dockerStrategy: {dockerfilePath: agent/Containerfile}
+      output:
+        to: {kind: ImageStreamTag, name: "uc3-agent:latest"}
+      resources:
+        requests: {cpu: 500m, memory: 1Gi}
+        limits: {memory: 2Gi}
+
+  # --- The same agent (UC2 v1) under three refund policy versions, one Deployment each ---------
+  - apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: uc3-agent-policy-v1
+      labels: {app: uc3-agent-policy-v1, app.kubernetes.io/part-of: uc3-rhoai, uc3/component: agent}
+      annotations: {uc3/policy: "$500 per refund call (production)"}
+    spec:
+      replicas: 1
+      selector: {matchLabels: {app: uc3-agent-policy-v1}}
+      template:
+        metadata:
+          labels: {app: uc3-agent-policy-v1, app.kubernetes.io/part-of: uc3-rhoai, uc3/component: agent, uc3/policy: v1}
+        spec:
+          serviceAccountName: uc3-agent
+          containers:
+            - name: agent
+              image: "image-registry.openshift-image-registry.svc:5000/${NAMESPACE}/uc3-agent:latest"
+              imagePullPolicy: Always
+              ports: [{containerPort: 8000, name: http}]
+              envFrom: [{configMapRef: {name: uc3-llm}}]
+              env:
+                - name: LLM_API_KEY
+                  valueFrom: {secretKeyRef: {name: "${LLM_API_KEY_SECRET}", key: "${LLM_API_KEY_SECRET_KEY}"}}
+                - {name: AGENT_VERSION, value: v1}
+                - {name: POLICY_VERSION, value: v1}
+                - {name: RELAY_PLUGINS_FILE, value: /app/relay/plugins.toml}
+                - {name: MLFLOW_EXPERIMENT_NAME, value: "${TRACE_EXPERIMENT}"}
+                - {name: MLFLOW_TRACKING_URI, value: "${MLFLOW_TRACKING_URI}"}
+                - {name: MLFLOW_OTLP_ENDPOINT, value: "${MLFLOW_OTLP_ENDPOINT}"}
+                - {name: MLFLOW_PUBLIC_URI, value: "${MLFLOW_PUBLIC_URI}"}
+                - {name: MLFLOW_WORKSPACE, value: "${NAMESPACE}"}
+                - {name: MLFLOW_TRACKING_TOKEN_FILE, value: /var/run/secrets/kubernetes.io/serviceaccount/token}
+                - {name: MLFLOW_TRACKING_SERVER_CERT_PATH, value: /etc/uc3/service-ca/service-ca.crt}
+                - {name: TOOL_TIMEOUT_SECONDS, value: "${TOOL_TIMEOUT_SECONDS}"}
+                - {name: PUBLIC_POLICY_V1_URL, value: "http://localhost:${POLICY_V1_LOCAL_PORT}"}
+                - {name: PUBLIC_POLICY_V2_URL, value: "http://localhost:${POLICY_V2_LOCAL_PORT}"}
+                - {name: PUBLIC_POLICY_V3_URL, value: "http://localhost:${POLICY_V3_LOCAL_PORT}"}
+              volumeMounts:
+                - {name: service-ca, mountPath: /etc/uc3/service-ca, readOnly: true}
+                - {name: telemetry, mountPath: /app/telemetry}
+              readinessProbe:
+                httpGet: {path: /healthz, port: http}
+                periodSeconds: 5
+                failureThreshold: 60
+              resources:
+                requests: {cpu: 100m, memory: 384Mi}
+                limits: {memory: 1Gi}
+              securityContext:
+                allowPrivilegeEscalation: false
+                runAsNonRoot: true
+                capabilities: {drop: [ALL]}
+                seccompProfile: {type: RuntimeDefault}
+          volumes:
+            - name: service-ca
+              configMap: {name: uc3-service-ca}
+            - name: telemetry
+              emptyDir: {}
+
+  - apiVersion: v1
+    kind: Service
+    metadata:
+      name: uc3-agent-policy-v1
+      labels: {app.kubernetes.io/part-of: uc3-rhoai, uc3/component: agent, uc3/policy: v1}
+    spec:
+      selector: {app: uc3-agent-policy-v1}
+      ports: [{name: http, port: 8000, targetPort: http}]
+
+  - apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: uc3-agent-policy-v2
+      labels: {app: uc3-agent-policy-v2, app.kubernetes.io/part-of: uc3-rhoai, uc3/component: agent}
+      annotations: {uc3/policy: "$500 per customer request (candidate)"}
+    spec:
+      replicas: 1
+      selector: {matchLabels: {app: uc3-agent-policy-v2}}
+      template:
+        metadata:
+          labels: {app: uc3-agent-policy-v2, app.kubernetes.io/part-of: uc3-rhoai, uc3/component: agent, uc3/policy: v2}
+        spec:
+          serviceAccountName: uc3-agent
+          containers:
+            - name: agent
+              image: "image-registry.openshift-image-registry.svc:5000/${NAMESPACE}/uc3-agent:latest"
+              imagePullPolicy: Always
+              ports: [{containerPort: 8000, name: http}]
+              envFrom: [{configMapRef: {name: uc3-llm}}]
+              env:
+                - name: LLM_API_KEY
+                  valueFrom: {secretKeyRef: {name: "${LLM_API_KEY_SECRET}", key: "${LLM_API_KEY_SECRET_KEY}"}}
+                - {name: AGENT_VERSION, value: v1}
+                - {name: POLICY_VERSION, value: v2}
+                - {name: RELAY_PLUGINS_FILE, value: /app/relay/plugins.toml}
+                - {name: MLFLOW_EXPERIMENT_NAME, value: "${TRACE_EXPERIMENT}"}
+                - {name: MLFLOW_TRACKING_URI, value: "${MLFLOW_TRACKING_URI}"}
+                - {name: MLFLOW_OTLP_ENDPOINT, value: "${MLFLOW_OTLP_ENDPOINT}"}
+                - {name: MLFLOW_PUBLIC_URI, value: "${MLFLOW_PUBLIC_URI}"}
+                - {name: MLFLOW_WORKSPACE, value: "${NAMESPACE}"}
+                - {name: MLFLOW_TRACKING_TOKEN_FILE, value: /var/run/secrets/kubernetes.io/serviceaccount/token}
+                - {name: MLFLOW_TRACKING_SERVER_CERT_PATH, value: /etc/uc3/service-ca/service-ca.crt}
+                - {name: TOOL_TIMEOUT_SECONDS, value: "${TOOL_TIMEOUT_SECONDS}"}
+                - {name: PUBLIC_POLICY_V1_URL, value: "http://localhost:${POLICY_V1_LOCAL_PORT}"}
+                - {name: PUBLIC_POLICY_V2_URL, value: "http://localhost:${POLICY_V2_LOCAL_PORT}"}
+                - {name: PUBLIC_POLICY_V3_URL, value: "http://localhost:${POLICY_V3_LOCAL_PORT}"}
+              volumeMounts:
+                - {name: service-ca, mountPath: /etc/uc3/service-ca, readOnly: true}
+                - {name: telemetry, mountPath: /app/telemetry}
+              readinessProbe:
+                httpGet: {path: /healthz, port: http}
+                periodSeconds: 5
+                failureThreshold: 60
+              resources:
+                requests: {cpu: 100m, memory: 384Mi}
+                limits: {memory: 1Gi}
+              securityContext:
+                allowPrivilegeEscalation: false
+                runAsNonRoot: true
+                capabilities: {drop: [ALL]}
+                seccompProfile: {type: RuntimeDefault}
+          volumes:
+            - name: service-ca
+              configMap: {name: uc3-service-ca}
+            - name: telemetry
+              emptyDir: {}
+
+  - apiVersion: v1
+    kind: Service
+    metadata:
+      name: uc3-agent-policy-v2
+      labels: {app.kubernetes.io/part-of: uc3-rhoai, uc3/component: agent, uc3/policy: v2}
+    spec:
+      selector: {app: uc3-agent-policy-v2}
+      ports: [{name: http, port: 8000, targetPort: http}]
+
+  - apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: uc3-agent-policy-v3
+      labels: {app: uc3-agent-policy-v3, app.kubernetes.io/part-of: uc3-rhoai, uc3/component: agent}
+      annotations: {uc3/policy: "$300 per refund call (candidate)"}
+    spec:
+      replicas: 1
+      selector: {matchLabels: {app: uc3-agent-policy-v3}}
+      template:
+        metadata:
+          labels: {app: uc3-agent-policy-v3, app.kubernetes.io/part-of: uc3-rhoai, uc3/component: agent, uc3/policy: v3}
+        spec:
+          serviceAccountName: uc3-agent
+          containers:
+            - name: agent
+              image: "image-registry.openshift-image-registry.svc:5000/${NAMESPACE}/uc3-agent:latest"
+              imagePullPolicy: Always
+              ports: [{containerPort: 8000, name: http}]
+              envFrom: [{configMapRef: {name: uc3-llm}}]
+              env:
+                - name: LLM_API_KEY
+                  valueFrom: {secretKeyRef: {name: "${LLM_API_KEY_SECRET}", key: "${LLM_API_KEY_SECRET_KEY}"}}
+                - {name: AGENT_VERSION, value: v1}
+                - {name: POLICY_VERSION, value: v3}
+                - {name: RELAY_PLUGINS_FILE, value: /app/relay/plugins.toml}
+                - {name: MLFLOW_EXPERIMENT_NAME, value: "${TRACE_EXPERIMENT}"}
+                - {name: MLFLOW_TRACKING_URI, value: "${MLFLOW_TRACKING_URI}"}
+                - {name: MLFLOW_OTLP_ENDPOINT, value: "${MLFLOW_OTLP_ENDPOINT}"}
+                - {name: MLFLOW_PUBLIC_URI, value: "${MLFLOW_PUBLIC_URI}"}
+                - {name: MLFLOW_WORKSPACE, value: "${NAMESPACE}"}
+                - {name: MLFLOW_TRACKING_TOKEN_FILE, value: /var/run/secrets/kubernetes.io/serviceaccount/token}
+                - {name: MLFLOW_TRACKING_SERVER_CERT_PATH, value: /etc/uc3/service-ca/service-ca.crt}
+                - {name: TOOL_TIMEOUT_SECONDS, value: "${TOOL_TIMEOUT_SECONDS}"}
+                - {name: PUBLIC_POLICY_V1_URL, value: "http://localhost:${POLICY_V1_LOCAL_PORT}"}
+                - {name: PUBLIC_POLICY_V2_URL, value: "http://localhost:${POLICY_V2_LOCAL_PORT}"}
+                - {name: PUBLIC_POLICY_V3_URL, value: "http://localhost:${POLICY_V3_LOCAL_PORT}"}
+              volumeMounts:
+                - {name: service-ca, mountPath: /etc/uc3/service-ca, readOnly: true}
+                - {name: telemetry, mountPath: /app/telemetry}
+              readinessProbe:
+                httpGet: {path: /healthz, port: http}
+                periodSeconds: 5
+                failureThreshold: 60
+              resources:
+                requests: {cpu: 100m, memory: 384Mi}
+                limits: {memory: 1Gi}
+              securityContext:
+                allowPrivilegeEscalation: false
+                runAsNonRoot: true
+                capabilities: {drop: [ALL]}
+                seccompProfile: {type: RuntimeDefault}
+          volumes:
+            - name: service-ca
+              configMap: {name: uc3-service-ca}
+            - name: telemetry
+              emptyDir: {}
+
+  - apiVersion: v1
+    kind: Service
+    metadata:
+      name: uc3-agent-policy-v3
+      labels: {app.kubernetes.io/part-of: uc3-rhoai, uc3/component: agent, uc3/policy: v3}
+    spec:
+      selector: {app: uc3-agent-policy-v3}
+      ports: [{name: http, port: 8000, targetPort: http}]
+
+  # --- OpenShift AI Observability: scrape the agents' /metrics -----------------------------
+  # The RHOAI monitoring stack's OpenTelemetry target allocator picks up ServiceMonitors
+  # labelled monitoring.opendatahub.io/scrape=true in any namespace. The collector scrapes
+  # /metrics on the three Services and forwards the series to the stack's Prometheus.
+  - apiVersion: monitoring.coreos.com/v1
+    kind: ServiceMonitor
+    metadata:
+      name: uc3-agents
+      labels:
+        app.kubernetes.io/part-of: uc3-rhoai
+        monitoring.opendatahub.io/scrape: "true"
+    spec:
+      selector:
+        matchLabels: {uc3/component: agent}
+      endpoints:
+        - port: http
+          path: /metrics
+          interval: 15s

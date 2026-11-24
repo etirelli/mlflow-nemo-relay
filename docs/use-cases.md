@@ -68,7 +68,7 @@ allowed, and task completion in MLflow. OpenShift AI Observability adds latency
 and resource context under equivalent load. The agent stays fixed while the
 policy changes.
 
-➡️ Implemented in [`demos/uc3-community`](../demos/uc3-community) (Prometheus for latency and resources). Planned: `demos/uc3-rhoai`, with OpenShift AI Observability.
+➡️ Implemented in [`demos/uc3-community`](../demos/uc3-community) (Prometheus for latency and resources) and [`demos/uc3-rhoai`](../demos/uc3-rhoai) (OpenShift AI Observability).
 
 ---
 

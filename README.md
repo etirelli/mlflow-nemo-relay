@@ -21,7 +21,7 @@ product stack. Each folder runs on its own and has its own documentation.
 | [`demos/uc2-rhoai`](demos/uc2-rhoai) | **UC2** on Red Hat OpenShift AI: guardrail decisions in the project's MLflow workspace; v1 vs v2 evaluation (code scorers + LLM judge) as an in-cluster Job with its own service account | MLflow in OpenShift AI 3.6 + NeMo Relay 0.11 on OpenShift 4.22; any OpenAI-compatible LLM (configured locally) | ✅ Ready (validated live 2026-11-23, 16/16) |
 | [`demos/uc2-openshell`](demos/uc2-openshell) | **UC2** with two enforcement layers: Relay blocks refunds above the limit; the **OpenShell** sandbox lets the agent call only `POST /v1/refunds` on the payments service, so a "credit instead" workaround is denied. MLflow shows both kinds of block distinctly, in one trace. | uc2-community + OpenShell 0.1.9 (Podman), payments service over HTTP, LLM key held by an OpenShell provider | ✅ Ready (validated live 2026-11-24, 26/26) |
 | [`demos/uc3-community`](demos/uc3-community) | **UC3** Validate guardrail changes before rollout: the same agent under three Relay refund policies (production, a per-request budget, an over-strict limit); MLflow compares correct blocks, false blocks, prohibited actions allowed and task completion, Prometheus adds latency and resources under equivalent load, and a rollout gate promotes or rejects each candidate | Upstream MLflow 3.17 + NeMo Relay 0.11 + Prometheus 3.5 + LangGraph, on Podman/Docker; any OpenAI-compatible LLM | ✅ Ready (validated live 2026-11-24, 20/20) |
-| `demos/uc3-rhoai` | **UC3** Validate guardrail changes before rollout | RHOAI + OpenShift AI Observability + NeMo Relay | 🔜 Planned |
+| [`demos/uc3-rhoai`](demos/uc3-rhoai) | **UC3** on Red Hat OpenShift AI: the three-policy comparison as an in-cluster Job in the project's MLflow workspace, with latency from **OpenShift AI Observability** (RHOAI monitoring stack) and CPU/memory from cluster monitoring; rollout gate per candidate | MLflow and OpenShift AI Observability (Tech Preview) in OpenShift AI 3.6 + NeMo Relay 0.11 on OpenShift 4.22; any OpenAI-compatible LLM (configured locally) | ✅ Ready (validated live 2026-11-24, 22/22) |
 
 Naming convention: `uc<N>-<stack>`, where `<stack>` is `community` (upstream
 projects only, easiest to package), `openshell` (community stack with the agent
@@ -53,7 +53,8 @@ Then follow the [UC1 README](demos/uc1-community/README.md) and the
     ├── uc2-community/        # UC2: guardrail decisions -> evaluate and improve the agent
     ├── uc2-rhoai/            # UC2 on Red Hat OpenShift AI (evaluation as an in-cluster Job)
     ├── uc2-openshell/        # UC2 with a second layer: OpenShell egress policy on the payments service
-    └── uc3-community/        # UC3: compare policy versions with the agent fixed; rollout gate
+    ├── uc3-community/        # UC3: compare policy versions with the agent fixed; rollout gate
+    └── uc3-rhoai/            # UC3 on Red Hat OpenShift AI, with OpenShift AI Observability
 ```
 
 All data in these demos is synthetic. The SSNs use the never-issued `900-xx-xxxx` range.
