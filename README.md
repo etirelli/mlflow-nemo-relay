@@ -20,6 +20,7 @@ product stack. Each folder runs on its own and has its own documentation.
 | [`demos/uc2-community`](demos/uc2-community) | **UC2** Use guardrail decisions to improve agent behavior: Relay blocks refunds above a limit, MLflow evaluates agent v1 vs v2 (code scorers + LLM judge) | Upstream MLflow 3.17 + NeMo Relay 0.11 + LangGraph, on Podman/Docker; any OpenAI-compatible LLM | ✅ Ready (validated 2026-11-23, 16/16) |
 | [`demos/uc2-rhoai`](demos/uc2-rhoai) | **UC2** on Red Hat OpenShift AI: guardrail decisions in the project's MLflow workspace; v1 vs v2 evaluation (code scorers + LLM judge) as an in-cluster Job with its own service account | MLflow in OpenShift AI 3.6 + NeMo Relay 0.11 on OpenShift 4.22; any OpenAI-compatible LLM (configured locally) | ✅ Ready (validated live 2026-11-23, 16/16) |
 | [`demos/uc2-openshell`](demos/uc2-openshell) | **UC2** with two enforcement layers: Relay blocks refunds above the limit; the **OpenShell** sandbox lets the agent call only `POST /v1/refunds` on the payments service, so a "credit instead" workaround is denied. MLflow shows both kinds of block distinctly, in one trace. | uc2-community + OpenShell 0.1.9 (Podman), payments service over HTTP, LLM key held by an OpenShell provider | ✅ Ready (validated live 2026-11-24, 26/26) |
+| [`demos/uc3-community`](demos/uc3-community) | **UC3** Validate guardrail changes before rollout: the same agent under three Relay refund policies (production, a per-request budget, an over-strict limit); MLflow compares correct blocks, false blocks, prohibited actions allowed and task completion, Prometheus adds latency and resources under equivalent load, and a rollout gate promotes or rejects each candidate | Upstream MLflow 3.17 + NeMo Relay 0.11 + Prometheus 3.5 + LangGraph, on Podman/Docker; any OpenAI-compatible LLM | ✅ Ready (validated live 2026-11-24, 20/20) |
 | `demos/uc3-rhoai` | **UC3** Validate guardrail changes before rollout | RHOAI + OpenShift AI Observability + NeMo Relay | 🔜 Planned |
 
 Naming convention: `uc<N>-<stack>`, where `<stack>` is `community` (upstream
@@ -51,7 +52,8 @@ Then follow the [UC1 README](demos/uc1-community/README.md) and the
     ├── uc1-rhoai/            # UC1 on Red Hat OpenShift AI (MLflow workspaces, Kubernetes auth)
     ├── uc2-community/        # UC2: guardrail decisions -> evaluate and improve the agent
     ├── uc2-rhoai/            # UC2 on Red Hat OpenShift AI (evaluation as an in-cluster Job)
-    └── uc2-openshell/        # UC2 with a second layer: OpenShell egress policy on the payments service
+    ├── uc2-openshell/        # UC2 with a second layer: OpenShell egress policy on the payments service
+    └── uc3-community/        # UC3: compare policy versions with the agent fixed; rollout gate
 ```
 
 All data in these demos is synthetic. The SSNs use the never-issued `900-xx-xxxx` range.

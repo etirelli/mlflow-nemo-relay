@@ -1,0 +1,14 @@
+# Prometheus for the UC3 policy comparison: one scrape target per policy version.
+# The agents label their own series with policy=<version>; the job label also
+# identifies the service.
+global:
+  scrape_interval: 5s
+  evaluation_interval: 5s
+
+scrape_configs:
+  - job_name: agent-policy-v1
+    static_configs: [{targets: ["agent-policy-v1:8000"], labels: {policy_service: v1}}]
+  - job_name: agent-policy-v2
+    static_configs: [{targets: ["agent-policy-v2:8000"], labels: {policy_service: v2}}]
+  - job_name: agent-policy-v3
+    static_configs: [{targets: ["agent-policy-v3:8000"], labels: {policy_service: v3}}]
