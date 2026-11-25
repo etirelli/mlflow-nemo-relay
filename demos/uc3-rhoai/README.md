@@ -24,7 +24,7 @@ request; anything more needs a supervisor.*
 | Red Hat OpenShift AI | 3.6.0-ea.2 | MLflow (workspaces, Kubernetes auth), **OpenShift AI Observability** (Technology Preview) |
 | OpenShift | 4.22 (ROSA) | Builds, Deployments, RBAC, cluster monitoring |
 | Cluster Observability Operator / Red Hat build of OpenTelemetry / Tempo | 1.5.5 / 0.158 / 0.22 | The RHOAI monitoring stack's prerequisites |
-| NeMo Relay | 0.11.0 | The policy versions, decision telemetry, PII redaction, OTLP export |
+| NeMo Relay | 0.11.2 | The policy versions, decision telemetry, PII redaction, OTLP export |
 | MLflow | 3.17.2 (client) | Traces, GenAI evaluation, rollout tags |
 | Any OpenAI-compatible LLM | — | Agent and judge, configured locally. Validated with GLM 5.3. |
 

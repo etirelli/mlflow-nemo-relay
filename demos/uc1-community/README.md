@@ -10,7 +10,7 @@ This permutation uses **only upstream community components**, so one
 
 | Component | Version | Role |
 |---|---|---|
-| [NeMo Relay](https://github.com/NVIDIA/NeMo-Relay) (`nemo-relay[langgraph]`) | 0.11.0 | Agent runtime: managed tool/LLM execution, `pii_redaction` plugin, OTLP export |
+| [NeMo Relay](https://github.com/NVIDIA/NeMo-Relay) (`nemo-relay[langgraph]`) | 0.11.2 | Agent runtime: managed tool/LLM execution, `pii_redaction` plugin, OTLP export |
 | [LangGraph](https://github.com/langchain-ai/langgraph) / LangChain | 1.2 / 1.4 | The agent (`create_agent` with `NemoRelayMiddleware`) |
 | [MLflow](https://github.com/mlflow/mlflow) | 3.17.2 | Tracking server with basic auth and OTLP trace ingestion (`/v1/traces`) |
 | Any OpenAI-compatible LLM | — | Ollama (default), vLLM, NVIDIA NIM / build.nvidia.com, OpenAI, or a built-in scripted model |

@@ -14,7 +14,7 @@
 |---|---|---|
 | Red Hat OpenShift AI | 3.6.0-ea.2 on OpenShift 4.22 (ROSA HCP) | MLflow with workspaces and Kubernetes RBAC; in-cluster builds and Jobs |
 | MLflow (OpenShift AI build) | 3.15.2 server, 3.17.2 client | Traces with `GUARDRAIL` spans; GenAI evaluation; evaluation dataset |
-| [NeMo Relay](https://github.com/NVIDIA/NeMo-Relay) | 0.11.0 | `refund-limit-v1` tool guardrail, decision telemetry, PII redaction, OTLP over TLS |
+| [NeMo Relay](https://github.com/NVIDIA/NeMo-Relay) | 0.11.2 | `refund-limit-v1` tool guardrail, decision telemetry, PII redaction, OTLP over TLS |
 | LangGraph / LangChain | 1.2 / 1.5 | The agent, v1 and v2 |
 | Any OpenAI-compatible LLM | — | Agents and judge, configured locally. Validated with GLM 5.3. |
 

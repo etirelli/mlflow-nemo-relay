@@ -15,7 +15,7 @@ policies stay fixed throughout.
 
 | Component | Version | Role |
 |---|---|---|
-| [NeMo Relay](https://github.com/NVIDIA/NeMo-Relay) | 0.11.0 | Tool guardrail `refund-limit-v1`, decision telemetry, PII redaction, OTLP export |
+| [NeMo Relay](https://github.com/NVIDIA/NeMo-Relay) | 0.11.2 | Tool guardrail `refund-limit-v1`, decision telemetry, PII redaction, OTLP export |
 | [NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell) | 0.1.9 | Sandbox per agent version: L7 egress policy, filesystem and process policy, LLM credential injection |
 | [MLflow](https://github.com/mlflow/mlflow) | 3.17.2 | Traces with both decisions; GenAI evaluation (code scorers + LLM judge); evaluation dataset |
 | LangGraph / LangChain | 1.2 / 1.4 | The agent, in two revisions |

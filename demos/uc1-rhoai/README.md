@@ -13,7 +13,7 @@ The UC1 demo running on **Red Hat OpenShift AI**:
 |---|---|---|
 | Red Hat OpenShift AI | 3.6.0-ea.2 on OpenShift 4.22 (ROSA HCP) | Platform. MLflow operator with workspaces and Kubernetes authorization. |
 | MLflow (OpenShift AI build) | 3.15.2 server | Trace store. `kubernetes-auth`, one workspace per namespace, OTLP ingestion |
-| [NeMo Relay](https://github.com/NVIDIA/NeMo-Relay) | 0.11.0 | Managed tool and LLM execution, `pii_redaction`, OTLP export over TLS |
+| [NeMo Relay](https://github.com/NVIDIA/NeMo-Relay) | 0.11.2 | Managed tool and LLM execution, `pii_redaction`, OTLP export over TLS |
 | LangGraph / LangChain | 1.2 / 1.5 | The agent |
 | Any OpenAI-compatible LLM with tool calling | — | Configured locally. Validated with GLM 5.3 on a hosted endpoint. |
 

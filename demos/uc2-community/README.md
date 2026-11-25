@@ -10,7 +10,7 @@ so fewer blocks mean a better agent, not weaker protection.
 
 | Component | Version | Role |
 |---|---|---|
-| [NeMo Relay](https://github.com/NVIDIA/NeMo-Relay) | 0.11.0 | Tool conditional-execution guardrail (`refund-limit-v1`), decision telemetry, PII redaction, OTLP export |
+| [NeMo Relay](https://github.com/NVIDIA/NeMo-Relay) | 0.11.2 | Tool conditional-execution guardrail (`refund-limit-v1`), decision telemetry, PII redaction, OTLP export |
 | [MLflow](https://github.com/mlflow/mlflow) | 3.17.2 | Traces with guardrail decisions; GenAI evaluation (code scorers + LLM judge); evaluation dataset |
 | LangGraph / LangChain | 1.2 / 1.4 | The agent, in two revisions |
 | Any OpenAI-compatible LLM | — | Agents and judge. Validated with GLM 5.3. |

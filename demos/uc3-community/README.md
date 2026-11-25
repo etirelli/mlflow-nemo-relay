@@ -18,7 +18,7 @@ request; anything more needs a supervisor.*
 
 | Component | Version | Role |
 |---|---|---|
-| [NeMo Relay](https://github.com/NVIDIA/NeMo-Relay) | 0.11.0 | The policy versions (conditional-execution guardrails), decision telemetry, PII redaction, OTLP export |
+| [NeMo Relay](https://github.com/NVIDIA/NeMo-Relay) | 0.11.2 | The policy versions (conditional-execution guardrails), decision telemetry, PII redaction, OTLP export |
 | [MLflow](https://github.com/mlflow/mlflow) | 3.17.2 | Traces with versioned decisions; GenAI evaluation (labeled dataset, code scorers, LLM judge); one run per policy with the comparison and the rollout decision |
 | [Prometheus](https://prometheus.io) | 3.5.0 | Request latency, guardrail cost, decisions, CPU and memory per policy |
 | LangGraph / LangChain | 1.2 / 1.4 | The agent (UC2's v1, fixed) |

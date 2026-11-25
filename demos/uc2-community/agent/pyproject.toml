@@ -6,7 +6,7 @@ requires-python = ">=3.11"
 license = { text = "Apache-2.0" }
 dependencies = [
   # NeMo Relay agent runtime with the LangGraph integration (pulls LangChain + LangGraph).
-  "nemo-relay[langgraph]==0.11.0",
+  "nemo-relay[langgraph]==0.11.2",
   # OpenAI-compatible chat client (Ollama, vLLM, NVIDIA NIM / build.nvidia.com, OpenAI, ...).
   "langchain-openai>=1.7,<2",
   # Client only: resolves experiments and powers the verification script.

@@ -13,7 +13,7 @@ LangGraph agent runs inside an **NVIDIA OpenShell** sandbox.
 | Component | Version | Role |
 |---|---|---|
 | [NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell) | 0.1.9 | Sandbox runtime: Landlock filesystem rules, a policy-enforced egress proxy (L7 for HTTP), credential injection through providers |
-| [NeMo Relay](https://github.com/NVIDIA/NeMo-Relay) (`nemo-relay[langgraph]`) | 0.11.0 | Agent runtime: managed tool/LLM execution, `pii_redaction` plugin, OTLP export |
+| [NeMo Relay](https://github.com/NVIDIA/NeMo-Relay) (`nemo-relay[langgraph]`) | 0.11.2 | Agent runtime: managed tool/LLM execution, `pii_redaction` plugin, OTLP export |
 | [LangGraph](https://github.com/langchain-ai/langgraph) / LangChain | 1.2 / 1.4 | The agent (`create_agent` with `NemoRelayMiddleware`) |
 | [MLflow](https://github.com/mlflow/mlflow) | 3.17.2 | Tracking server with basic auth and OTLP trace ingestion (`/v1/traces`), run in compose outside the sandbox |
 | Any OpenAI-compatible LLM | — | Native Ollama (default), build.nvidia.com through an OpenShell provider, or the built-in scripted model |

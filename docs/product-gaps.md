@@ -90,7 +90,7 @@ Redaction coverage (gap 1):
 | REL-11 | **`target_paths` can't be recursive (`**`).** | Deeply nested sensitive fields need every path listed, or `target_path_globs` per level. | Support recursive paths. | uc1-community |
 | REL-12 | **Redaction is telemetry-only.** A hosted LLM still receives the SSN in the prompt. | Customers who must keep identifiers from the model need an execution-time control. | Position Relay intercepts or a pre-LLM sanitizer for that case. | uc1-* |
 | REL-13 | **Credentials in `header_env` are read once at activation.** | Rotating tokens need `header_file`, which is re-read on every request. | Document it alongside REL-9. | uc1-* |
-| REL-14 | **Docs and releases are out of step.** GitHub `main` documents an unreleased `1.0.0` API; PyPI's latest is `0.11.0`. | Easy to build against the wrong API. The demos pin `0.11.0` and use the tag's docs. | Version the docs. | all |
+| REL-14 | **Docs and releases are out of step.** GitHub `main` documents an unreleased `1.0.0` API; PyPI's latest is `0.11.2`. | Easy to build against the wrong API. The demos pin `0.11.2` and use the tag's docs. | Version the docs. | all |
 | REL-15 | **Positive: secure defaults and event-level redaction.** Relay refuses plain HTTP to non-loopback hosts unless allow-listed (`insecure_http_hosts`). Without redaction, one trace contains the SSN about 90 times across many attributes, and redacting once at the event level, before projection, covers them all. | — | Keep both. They make a good joint message. | uc1-* |
 
 ### MLflow (upstream)
