@@ -77,9 +77,7 @@ Carried over from UC1
 26/26 checks passed.
 ```
 
-That output predates the trace relay, which added check 18. A re-run on
-2026-11-24 with the scripted model passed 26/26 (the LLM judge check
-needs an LLM).
+That output predates the trace relay, which added check 18.
 
 ## `make test` (offline, 14 tests)
 

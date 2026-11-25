@@ -10,12 +10,13 @@ demos under [`demos/`](../demos) are illustrations. This page is the analysis.
 
 | Component | Version |
 |---|---|
-| NVIDIA NeMo Relay | 0.11.0 (PyPI) |
+| NVIDIA NeMo Relay | 0.11.2 (PyPI) |
 | MLflow | 3.17.2 client, upstream server |
 | MLflow in OpenShift AI | 3.15.2 server (`mlflow-kubernetes-plugins`) |
 | Red Hat OpenShift AI | 3.6.0-ea.2, on OpenShift 4.22.22 (ROSA HCP, 2 × m5.2xlarge) |
 | OpenShift AI Observability | Technology Preview. Cluster Observability Operator 1.5.5, Red Hat build of OpenTelemetry 0.158.0, Tempo Operator 0.22.0 |
 | NVIDIA OpenShell | 0.1.9 (Homebrew gateway, rootless Podman 5, Apple M2) |
+| OpenTelemetry Collector (contrib) | 0.165.0, in the OpenShell demos: receives the OpenShell agent trace relay |
 | LangGraph / LangChain | 1.2 / 1.4 |
 | Prometheus | 3.5.0 |
 | LLM | GLM 5.3 (agents and judge). Early UC1 runs used local Ollama models. |
@@ -34,7 +35,7 @@ where a finding came up.
 |---|---|---|---|
 | **1. SSN field redaction**, including inputs echoed in results and error details | ✅ | See the surface table below. No SSN in any exported trace or ATOF file; a baseline control without redaction leaks it. | uc1-community, uc1-openshell, uc1-rhoai |
 | **2. Span parentage and status preserved through OTLP export** | ✅ (see REL-6) | The tree `request → agent → model/tools → LLM/TOOL` arrives intact. A timed-out tool arrives as `ERROR` with the right duration (about 2,000 ms vs about 200 ms). With the `openinference` projection, MLflow maps span kinds natively. | uc1-community, uc1-rhoai |
-| **3. Authenticated routing to the right project and experiment** | ✅ upstream and on OpenShift AI | Upstream: basic auth plus per-experiment permissions (401 / 403). OpenShift AI: service-account bearer token, `X-MLFLOW-WORKSPACE`, a `resourceNames`-scoped Role (403 on a non-granted experiment), TLS with the service CA, rotating tokens through `header_file`. | uc1-community, uc1-rhoai |
+| **3. Authenticated routing to the right project and experiment** | ✅ upstream and on OpenShift AI | Upstream: basic auth plus per-experiment permissions (401 / 403). OpenShift AI: service-account bearer token, `X-MLFLOW-WORKSPACE`, a `resourceNames`-scoped Role (403 on a non-granted experiment), TLS with the service CA, rotating tokens through `header_file`. OpenShell: a collector outside the sandbox authenticates for the agent, so the sandbox holds no MLflow credentials (OSH-5). | uc1-community, uc1-openshell, uc1-rhoai |
 
 Redaction coverage (gap 1):
 
@@ -46,7 +47,8 @@ Redaction coverage (gap 1):
 | User message, LLM prompts and responses | ✅ | Regex profile on the managed LLM input/output |
 | Agent request and response (root span, MLflow previews) | ✅ | Regex profile on scope input/output |
 | Relay's local ATOF event file | ✅ | The same sanitized stream |
-| What the tool, LLM and user actually receive | Unchanged, by design | Sanitize guardrails, not intercepts (see REL-12) |
+| What the tool, LLM and user actually receive | Unchanged by default | Sanitize guardrails, not intercepts (see REL-12) |
+| What the LLM receives when a request opts in (`protect_llm`) | ✅ A reference (`SSN_REF_1`), not the SSN | The UC1 demos' own scope-local request intercepts (see REL-12) |
 
 ### UC2: Use guardrail decisions to improve agent behavior
 
@@ -88,10 +90,11 @@ Redaction coverage (gap 1):
 | REL-9 | **`header_file` has no prefix or template.** It sends the file content verbatim, but Kubernetes token files hold the raw token, without `Bearer `. | Pods can't point Relay at the service-account token directly. The demos run a refresher thread that writes `Bearer <token>`. | A value template (`header_file_prefix = "Bearer "`) or `auth = {type = "bearer", token_file = …}`. | uc1-rhoai, uc2-rhoai, uc3-rhoai |
 | REL-10 | **No built-in SSN (or national ID) detector.** Relay ships `email`, `phone`, `credit_card`, `api_key`, `jwt` and others. | Every user writes a regex, and permissive ones bite: `\d{3}-?\d{2}-?\d{4}` matches nanosecond fractions in RFC 3339 timestamps (seen on Linux, not macOS). | Add an `ssn` / national-ID detector with masking defaults. The demos require separators in free text and rely on the field profile for structured values. | uc1-* |
 | REL-11 | **`target_paths` can't be recursive (`**`).** | Deeply nested sensitive fields need every path listed, or `target_path_globs` per level. | Support recursive paths. | uc1-community |
-| REL-12 | **Redaction is telemetry-only.** A hosted LLM still receives the SSN in the prompt. | Customers who must keep identifiers from the model need an execution-time control. | Position Relay intercepts or a pre-LLM sanitizer for that case. | uc1-* |
+| REL-12 | **Redaction is telemetry-only.** A hosted LLM still receives the SSN in the prompt. | Customers who must keep identifiers from the model need an execution-time control. | Offer it built in, for example as a tokenizing mode of `pii_redaction`. The UC1 demos show the pattern with their own scope-local request intercepts (`llm_protection.py`, opt-in per request): the LLM gets a reference such as `SSN_REF_1`, and the tool still gets the SSN. | uc1-* |
 | REL-13 | **Credentials in `header_env` are read once at activation.** | Rotating tokens need `header_file`, which is re-read on every request. | Document it alongside REL-9. | uc1-* |
 | REL-14 | **Docs and releases are out of step.** GitHub `main` documents an unreleased `1.0.0` API; PyPI's latest is `0.11.2`. | Easy to build against the wrong API. The demos pin `0.11.2` and use the tag's docs. | Version the docs. | all |
 | REL-15 | **Positive: secure defaults and event-level redaction.** Relay refuses plain HTTP to non-loopback hosts unless allow-listed (`insecure_http_hosts`). Without redaction, one trace contains the SSN about 90 times across many attributes, and redacting once at the event level, before projection, covers them all. | — | Keep both. They make a good joint message. | uc1-* |
+| REL-16 | **Relay 0.11.0 fails to start under the OpenShell agent trace relay.** OpenShell sets `OTEL_EXPORTER_OTLP_COMPRESSION=none` in every sandbox process; 0.11.0 supports only `gzip` and `zstd`, and applies the variable to configured endpoints too, although its docs scope it to the automatic exporter. | Activation fails: `unsupported compression algorithm 'none'`. | Fixed in 0.11.1 (NVIDIA/NeMo-Relay#1574); the demos use 0.11.2. | uc1-openshell, uc2-openshell |
 
 ### MLflow (upstream)
 
@@ -143,19 +146,21 @@ These issues are known to the product team and are being worked on.
 
 | ID | Finding | Impact | Suggestion | Seen in |
 |---|---|---|---|---|
-| OSH-1 | **A second request on a kept-alive plain-HTTP connection is dropped.** The L7 engine logs it as `ALLOWED … request_sequence:1`, but it never reaches the upstream. | **Silent telemetry loss** that looks like a Relay or MLflow bug: 6 of 32 traces lost their root spans, and one trace disappeared. | Fix keep-alive handling in the L7 HTTP path. Workaround: Relay sends `Connection: close` through `header_env`; afterwards 34/34 traces arrived complete. | uc2-openshell |
+| OSH-1 | **A second request on a kept-alive plain-HTTP connection is dropped.** The L7 engine logs it as `ALLOWED … request_sequence:1`, but it never reaches the upstream. | **Silent telemetry loss** that looks like a Relay or MLflow bug: 6 of 32 traces lost their root spans, and one trace disappeared. | Fix keep-alive handling in the L7 HTTP path. Workaround: Relay sends `Connection: close` through `header_env`; afterwards 34/34 traces arrived complete. The trace path no longer goes through the L7 proxy: the OpenShell demos export to the agent trace relay, without the workaround. | uc2-openshell |
 | OSH-2 | **Disallowed hosts are refused at TCP level, with no reason.** The client gets `ConnectError`/`EACCES`, not the documented `403 policy_denied` JSON, which appears only for L7 denials on allowed hosts. | Agents can't tell a policy denial from a network failure; only the sandbox log can. | A machine-readable denial for all refusals. Pattern that works today: put every backend under an L7 rule, even a one-path allow, to get a readable `403 {"error":"policy_denied","policy","rule",…}`. | uc1-openshell, uc2-openshell |
 | OSH-3 | **Denials reach MLflow only as a tool's error text.** The supervisor's decision (an OCSF event) isn't linked to the agent's span. | Fragile: a tool that swallows the body loses the reason. | Propagate `traceparent` through the proxy and stamp it on the OCSF decision, or export OCSF over OTLP with the agent's trace context. | uc1-openshell, uc2-openshell |
 | OSH-4 | **`openshell logs` keeps a short buffer** ("log buffer contains only the last N lines"). | Denial lines can scroll out before collection. | Export OCSF events over OTLP for durable evidence. | uc1-openshell, uc2-openshell |
-| OSH-5 | **The MLflow password must be passed with `--env`**, which OpenShell treats as non-secret (and warns about). | MLflow basic auth needs a Basic header built in-process, so a provider placeholder can't be substituted inside it. | The agent trace relay with per-sandbox headers, or bearer-token auth to MLflow. | uc1-openshell, uc2-openshell |
+| OSH-5 | **Direct export needs the MLflow password in the sandbox**, passed with `--env`, which OpenShell treats as non-secret (and warns about). | MLflow basic auth needs a Basic header built in-process, so a provider placeholder can't be substituted inside it. | **Resolved in both OpenShell demos** with the agent trace relay: a collector outside the sandbox adds the credentials, so the sandbox has none, and no route to MLflow. | uc1-openshell, uc2-openshell |
 | OSH-6 | **Positive: credential injection works with a Python OpenAI client over TLS.** `--credential LLM_API_KEY` stores the key; the sandbox sees a placeholder; the supervisor substitutes the real key. | The LLM key never enters the sandbox. | — | uc2-openshell |
 | OSH-7 | **Provider profiles: `rules` and `access` are mutually exclusive** on an endpoint. | Good least privilege, but undocumented. | Document it. | uc2-openshell |
 | OSH-8 | **Re-registering a provider profile isn't idempotent.** `profile lint` fails once the id exists; `profile update -f` needs the exported `resource_version`. | Scripts can't just "apply" a profile file. | An apply-style command, or a lint mode that ignores the gateway. | uc2-openshell |
 | OSH-9 | **CLI friction:** no `openshell policy lint` (use `openshell-prover check --boundary P P`); `sandbox delete` is asynchronous with no `--wait`; `forward start -d` keeps the caller's stdout open. | Scripts need workarounds (polling, redirects). | Add `policy lint`, `--wait`, and detach stdout. | uc1-openshell, uc2-openshell |
 | OSH-10 | **Older write-ups are out of date.** `inference.local` and managed inference routing are gone (use providers); `--from <Dockerfile>` no longer builds; the image `CMD` doesn't run (the command goes after `--`). | Following older guides fails. | Refresh docs and examples. | uc1-openshell |
 | OSH-11 | **The gateway logs a recurring warning on Podman** (`Compute driver watch stream failed to start … timeout after 60s`). | No visible effect. | — | uc1-openshell |
-| OSH-12 | **Positive: L7 least privilege on the trace store and payments API works well.** Agents can only `POST /v1/traces` and resolve their experiment, or only `POST /v1/refunds`. | A compromised agent can't read other traces or call other APIs, even with valid credentials. | — | uc1-openshell, uc2-openshell |
-| OSH-13 | **OpenShell doesn't replace Relay redaction.** MLflow is an allowed destination, so an unredacted agent still leaks the SSN into traces. | The layers complement each other: OpenShell controls where data goes, Relay controls what telemetry contains. | Use as a joint message. | uc1-openshell |
+| OSH-12 | **Positive: L7 least privilege on the trace store and payments API works well.** With the agent trace relay, the agents have no MLflow rule at all, and the UC2 agent can only `POST /v1/refunds`. | A compromised agent can't read other traces or call other APIs, even with valid credentials. | — | uc1-openshell, uc2-openshell |
+| OSH-13 | **OpenShell doesn't replace Relay redaction.** The agent trace relay forwards whatever the agent exports, so an unredacted agent still leaks the SSN into traces. | The layers complement each other: OpenShell controls where data goes, Relay controls what telemetry contains. | Use as a joint message. | uc1-openshell |
+| OSH-14 | **By design, the agent trace relay has one destination and one set of headers per gateway**, and makes one delivery attempt per batch; OpenShell documents both. | Per-sandbox or per-mode routing (UC1's redacted and baseline experiments) needs a collector between the relay and MLflow. A batch is lost if the collector is down. | Feature request: per-sandbox headers or destinations, and retries. The demos route on Relay's `demo.relay_mode` in the collector. | uc1-openshell, uc2-openshell |
+| OSH-15 | **Positive: trace attribution the agent can't forge.** The supervisor stamps `openshell.sandbox.id` and `openshell.telemetry.source=agent` on every relayed span. | MLflow can trust which sandbox a trace came from; `make verify` checks it on every trace. | — | uc1-openshell, uc2-openshell |
 
 ### Policy design and measurement (product-independent)
 
@@ -183,5 +188,6 @@ These issues are known to the product team and are being worked on.
 - [ ] Repeat the OpenShift AI demos on OpenShift AI 3.5 GA (`stable-3.x`) before customer-facing use. These were validated on the 3.6.0-ea.2 early-access build.
 - [ ] `uc2-rhoai-openshell`: OpenShell on OpenShift AI, via the `opendatahub-io/openshell` installer.
 - [ ] Re-test OSH-1 on a newer OpenShell build and with Docker; validate Docker Desktop and colima as runtimes.
-- [ ] Try the OpenShell agent trace relay (OSH-5) and OCSF export over OTLP (OSH-3, OSH-4).
+- [ ] Try OCSF export over OTLP (OSH-3, OSH-4). The agent trace relay is in use in both OpenShell demos (OSH-5).
+- [ ] Re-run the OpenShift AI demos live on Relay 0.11.2, including uc1-rhoai's opt-in LLM protection.
 - [ ] Report upstream: REL-1 to REL-5, REL-9 (NeMo Relay); MLF-1, MLF-3, MLF-5 (MLflow); RMF-1, RMF-2 (MLflow in OpenShift AI); OSH-1 to OSH-3, OSH-7 to OSH-9 (OpenShell). The OBS findings are known to the product team.

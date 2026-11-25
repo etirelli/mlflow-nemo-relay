@@ -28,12 +28,6 @@ policies stay fixed throughout.
 - `make eval` meets the success criteria;
 - `make test` passes 13 offline tests.
 
-**Update:** since that run, traces leave through the OpenShell agent trace
-relay instead of a direct export to MLflow. Validated again on 2026-11-24 with
-OpenShell 0.1.9 (Docker driver) and the scripted model: `make verify` passes
-26/26 (the 27th check, the LLM judge, needs an LLM), `make eval` meets the
-success criteria, and `make test` passes 14 offline tests.
-
 ## What the demo shows
 
 1. **Layer 1, Relay.** v1 attempts a $900 refund. `refund-limit-v1` rejects

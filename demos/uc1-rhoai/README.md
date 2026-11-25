@@ -20,9 +20,6 @@ The UC1 demo running on **Red Hat OpenShift AI**:
 **Status:** ✅ validated end to end on 2026-11-23. `make demo` passes 12/12,
 and `make test` passes 9 offline tests.
 
-**Update:** opt-in LLM protection was added after that run. `make test`
-passes 10 offline tests, and `make verify` has 13 checks. Live re-validation on OpenShift AI is pending.
-
 ## What the demo shows
 
 1. **Run a customer lookup.** The chat UI or REST API sends a synthetic SSN.

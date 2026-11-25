@@ -26,12 +26,6 @@ LangGraph agent runs inside an **NVIDIA OpenShell** sandbox.
 > 16/16, and `make test` passes 8 offline tests. Docker Desktop and colima
 > have not been tried. Findings are in the consolidated
 > [product gaps report](../../docs/product-gaps.md#nvidia-openshell).
->
-> **Update:** since that run, traces leave through the OpenShell agent trace
-> relay instead of a direct export to MLflow, and requests can opt in to
-> keeping the SSN from the LLM. Validated again on 2026-11-24 with OpenShell
-> 0.1.9 (Docker driver) and the scripted model: `make demo` passes 18/18,
-> and `make test` passes 10 offline tests.
 
 ## What the demo shows
 

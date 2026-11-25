@@ -87,8 +87,7 @@ Authenticated routing
 ```
 
 That output predates the opt-in LLM protection and the trace relay, which
-added checks 9 and 18. A re-run on 2026-11-24 (OpenShell 0.1.9, Docker
-driver, scripted model) passed 18/18.
+added checks 9 and 18.
 
 The exit code is non-zero if any check fails, so `make demo` works as a smoke test.
 
