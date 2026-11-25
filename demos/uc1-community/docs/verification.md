@@ -23,14 +23,16 @@ every trace back, and checks:
 | 6 | The error span's output still says `TimeoutError … did not respond` | *the failure remains understandable* / *error context* |
 | 7 | **No SSN anywhere** in the exported traces: every span, attribute, input/output, event, tag and preview. It checks the known synthetic SSNs (dashed and bare digits) and any `NNN-NN-NNNN` value. | *The synthetic SSN is absent from exported telemetry* |
 | 8 | `[REDACTED-SSN]` markers are present | Proves the sanitizer ran, rather than the data simply being absent |
-| 9 | No SSN in Relay's local ATOF event file | The sanitized canonical stream is clean at the source |
-| 10 | **Control:** the baseline experiment *does* contain SSNs | Proves check 7 is meaningful |
-| 11 | `POST /v1/traces` without credentials gets **401** | *Authenticated routing* |
-| 12 | The agent's service account posting to a non-granted experiment gets **403** | *…to the correct project and experiment* (project isolation) |
+| 9 | **LLM protection:** in requests with `protect_llm` on, every LLM span input carries an SSN reference and neither an SSN nor `[REDACTED-SSN]`, and `lookup_customer` succeeded | The model received a reference, and the tool still got the real SSN |
+| 10 | No SSN in Relay's local ATOF event file | The sanitized canonical stream is clean at the source |
+| 11 | **Control:** the baseline experiment *does* contain SSNs | Proves check 7 is meaningful |
+| 12 | `POST /v1/traces` without credentials gets **401** | *Authenticated routing* |
+| 13 | The agent's service account posting to a non-granted experiment gets **403** | *…to the correct project and experiment* (project isolation) |
 
 *"Redaction leaves the permitted lookup working"* is covered by
 `make scenarios`. The API response returns the real customer record, which
-proves the tool received the original SSN.
+proves the tool received the original SSN. It also sends the successful lookup
+with `protect_llm` on, for check 9.
 
 Example output:
 
@@ -47,6 +49,7 @@ Redacted experiment: uc1-customer-lookup-redacted
          "TimeoutError: customer records service did not respond within 2.0s while looking up SSN [REDACTED-SSN]. ..."
   [PASS] No SSN appears in exported MLflow traces (spans, attributes, inputs/outputs, previews)
   [PASS] Redaction markers are present (sanitizer ran, data was not just missing)
+  [PASS] With LLM protection on, the LLM saw SSN references only, and the lookup still succeeded
   [PASS] No SSN appears in the redacted Relay ATOF event file
 Baseline experiment (control, no redaction): uc1-customer-lookup-baseline
   [PASS] Control: without Relay redaction, the SSN DOES leak into MLflow
@@ -55,7 +58,7 @@ Authenticated routing
   [PASS] OTLP export without credentials is rejected
   [PASS] The agent's service account cannot write to an experiment it was not granted
 
-12/12 checks passed.
+13/13 checks passed.
 ```
 
 The exit code is non-zero if any check fails, so `make demo` works as a smoke test.
@@ -75,6 +78,9 @@ that receiver and drives the agent with the scripted model:
   `x-mlflow-experiment-id` headers are sent.
 - `test_baseline_control_leaks_ssn`: the control.
 - `test_policy_files_render`: no unresolved `${VAR}` placeholders.
+- `test_llm_protection.py`: with `protect_llm` on, the model only ever sees
+  `SSN_REF_1`, the tool and the user get the real SSN, and the LLM spans
+  record the reference.
 
 ```bash
 make test          # equivalent to: cd agent && uv run --extra test pytest -q

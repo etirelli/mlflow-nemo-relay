@@ -2,6 +2,8 @@
 
 It behaves like a tool-calling LLM: it finds an SSN in the user's message,
 requests one ``lookup_customer`` call, and then summarizes the tool result.
+With LLM protection on, it sees an SSN reference (``SSN_REF_1``) instead and
+passes that to the tool, as a real model would.
 Use it with ``LLM_PROVIDER=scripted`` when no LLM endpoint is available.
 """
 
@@ -17,7 +19,7 @@ from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
 
-SSN_RE = re.compile(r"\b\d{3}-?\d{2}-?\d{4}\b")
+SSN_RE = re.compile(r"\b\d{3}-?\d{2}-?\d{4}\b|\bSSN_REF_\d+\b")
 
 
 class ScriptedCustomerLookupModel(BaseChatModel):

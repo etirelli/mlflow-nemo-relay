@@ -25,7 +25,8 @@ flowchart LR
 The solid lines are real execution: the LLM and the tool get the real SSN, and
 so does the user, who is entitled to it. The dotted lines are telemetry. Every
 telemetry event passes through the `pii_redaction` plugin before any
-subscriber or exporter receives it.
+subscriber or exporter receives it. A request can also opt in to keeping the
+SSN from the LLM; see [Keeping the SSN from the LLM](#keeping-the-ssn-from-the-llm-opt-in).
 
 ## The redaction boundary
 
@@ -53,6 +54,46 @@ The policy ([`relay/plugins.redacted.toml`](../relay/plugins.redacted.toml)) has
 |---|---|---|
 | 1. field-level | JSON pointer `/ssn`, any value | The structured `ssn` argument and the `ssn` field echoed in the tool result, whatever their format |
 | 2. pattern | regex `\b\d{3}[- ]\d{2}[- ]\d{4}\b` on every string leaf | The SSN in the user message, LLM prompts and responses, echoed text in results, tool **error messages**, and the agent request/response |
+
+## Keeping the SSN from the LLM (opt-in)
+
+Telemetry redaction leaves execution alone, so a hosted LLM still receives the
+SSN. A chat request with `"protect_llm": true` (the *Keep SSN from the LLM*
+checkbox) closes that gap with two Relay **request intercepts**, which rewrite
+the real request rather than its telemetry copy
+([`llm_protection.py`](../agent/src/customer_lookup_agent/llm_protection.py)):
+
+```mermaid
+sequenceDiagram
+    participant App as app.py request scope
+    participant Relay
+    participant LLM
+    participant Tool as lookup_customer
+    App->>Relay: register scope-local intercepts
+    Relay->>LLM: prompt with SSN_REF_1
+    LLM->>Relay: tool call ssn=SSN_REF_1
+    Relay->>Tool: ssn=900-12-0001
+    Tool->>Relay: record, which echoes the SSN
+    Relay->>LLM: next prompt, echo replaced with SSN_REF_1
+    LLM->>App: reply with SSN_REF_1, replaced for the user
+```
+
+- The **LLM request intercept** replaces every SSN in the outbound request,
+  including the tool result echoed back to the model, with a per-request
+  reference such as `SSN_REF_1`. It also adds a note to the system prompt
+  telling the model to pass references to tools as written.
+- The **tool request intercept** swaps references back, so `lookup_customer`
+  still gets the real SSN.
+- Both are registered with `nemo_relay.scope_local` on the request's root
+  scope. Relay removes them when that scope closes, so other requests are
+  unaffected.
+- The app swaps references back in the reply, because the support engineer is
+  entitled to the real values.
+
+Relay records the rewritten request on the LLM span, so MLflow shows exactly
+what the model received: the reference, not `[REDACTED-SSN]`. Each protected
+LLM span also carries a `relay.ssn_tokenized` event, and the root span carries
+`demo.llm_protection = on`.
 
 ## Trace structure in MLflow
 

@@ -9,7 +9,7 @@ engineers the evidence they need, without the sensitive data.*
 ```bash
 cd demos/uc1-community
 make clean && make up          # or: make up-scripted (no LLM, fully deterministic)
-make demo                      # warms everything up; expect "12/12 checks passed"
+make demo                      # warms everything up; expect "13/13 checks passed"
 ```
 
 Open three browser tabs:
