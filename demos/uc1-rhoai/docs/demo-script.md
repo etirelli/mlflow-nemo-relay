@@ -12,7 +12,7 @@ cd demos/uc1-rhoai
 make check            # cluster, Secret, MLflow OK
 make up               # if not deployed yet
 make port-forward
-make demo             # warm-up; expect "12/12 checks passed"
+make demo             # warm-up; expect "13/13 checks passed"
 ```
 
 Open:

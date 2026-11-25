@@ -13,6 +13,10 @@
 # the "partner CRM" (partner-crm.example.com), PyPI, or any other internet host,
 # so even a buggy or prompt-injected tool cannot ship customer records out.
 #
+# MLflow is NOT in this file. The agent's traces leave through the OpenShell
+# agent trace relay, a gateway setting (openshell/gateway-agent-relay.toml), so
+# the agent process has no network route to MLflow and no MLflow credentials.
+#
 # filesystem_policy, landlock and process apply at sandbox start.
 # network_policies are live: `openshell policy set` / `policy update` hot-reloads them.
 
@@ -37,31 +41,6 @@ landlock:
   compatibility: best_effort
 
 network_policies:
-  # MLflow on the laptop, published by compose on port 5000.
-  # L7-enforced: the agent may export traces and resolve its experiment, nothing
-  # else. It cannot read other traces, download models, or call admin APIs.
-  mlflow_tracking:
-    name: mlflow-otlp-export
-    endpoints:
-      - host: host.openshell.internal
-        port: 5000
-        protocol: rest
-        enforcement: enforce
-        rules:
-          - allow:
-              method: POST
-              path: /v1/traces
-          - allow:
-              method: GET
-              path: /api/2.0/mlflow/experiments/get-by-name
-          - allow:
-              method: POST
-              path: /api/2.0/mlflow/experiments/create
-    binaries:
-      # Scripts run as their interpreter; list the real path, not a symlink.
-      # Relay's exporter runs inside the Python process.
-      - path: /usr/local/bin/python3.12
-
   # Native Ollama on the laptop (default LLM). Only chat completions.
   # For build.nvidia.com, attach the provider in openshell/providers/ instead:
   # the provider contributes its own endpoint rule and injects the API key.
@@ -80,4 +59,5 @@ network_policies:
               method: GET
               path: /v1/models
     binaries:
+      # Scripts run as their interpreter; list the real path, not a symlink.
       - path: /usr/local/bin/python3.12

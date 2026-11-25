@@ -1,6 +1,6 @@
 # NeMo Relay plugin configuration for the UC2 OpenShell support agent (both versions).
 #
-# Same telemetry setup as UC1 (OTLP to MLflow + pii_redaction). The refund
+# Same telemetry setup as UC1 (OTLP export + pii_redaction). The refund
 # guardrail is registered in code (support_agent/policy.py): Relay 0.11 has no
 # config-file component for custom conditional-execution guardrails.
 #
@@ -9,7 +9,7 @@
 # file to nemo_relay.plugin.activate().
 #
 # Pipeline:  agent tool/LLM call -> Relay event -> pii_redaction sanitizers
-#            -> subscribers/exporters (OTLP to MLflow, local ATOF file)
+#            -> subscribers/exporters (OTLP to the OpenShell agent trace relay, local ATOF file)
 # The tool and the LLM always receive the original, unredacted values.
 
 version = 1
@@ -20,7 +20,11 @@ unknown_field = "error"
 unsupported_value = "error"
 
 # ---------------------------------------------------------------------------
-# Observability: export OpenInference-shaped OTLP traces to MLflow.
+# Observability: export OpenInference-shaped OTLP traces through the OpenShell
+# agent trace relay. The relay forwards them to the demo's OpenTelemetry
+# Collector (otel/collector.yaml), which adds the MLflow credentials and the
+# experiment header. The sandbox holds no MLflow credentials and has no
+# network route to MLflow.
 # ---------------------------------------------------------------------------
 [[components]]
 kind = "observability"
@@ -28,11 +32,10 @@ enabled = true
 
 [components.config]
 version = 4
-# Relay requires HTTPS for non-loopback OTLP endpoints. The sandbox reaches the
-# laptop's MLflow over plain HTTP at host.openshell.internal (through the
-# OpenShell supervisor, which allows only POST /v1/traces there), so we allow
-# only that one host. In production, use HTTPS (e.g. an OpenShift route with TLS).
-insecure_http_hosts = ["${MLFLOW_OTLP_HOST}"]
+# Relay requires HTTPS for non-loopback OTLP endpoints. The relay address
+# (192.0.0.8) is served by the OpenShell supervisor inside the sandbox boundary,
+# so plain HTTP never crosses a network there.
+insecure_http_hosts = ["192.0.0.8"]
 
 [components.config.opentelemetry]
 enabled = true
@@ -41,22 +44,13 @@ enabled = true
 # MLflow translates OpenInference span kinds into MLflow span types
 # (AGENT, CHAIN, LLM, TOOL), so traces render natively in the MLflow UI.
 type = "openinference"
-endpoint = "${MLFLOW_OTLP_TRACES_ENDPOINT}"
+# The agent trace relay, at the address OpenShell injects; Relay appends /v1/traces.
+endpoint = "${OTEL_EXPORTER_OTLP_ENDPOINT}"
 transport = "http_binary"
 service_name = "support-agent"
 service_version = "uc2-openshell"
 scheduled_delay_millis = 500
 timeout_millis = 10000
-
-[components.config.opentelemetry.endpoints.header_env]
-# Authenticated routing: MLflow basic-auth credentials for the agent's
-# service account, and the experiment that should receive the traces.
-authorization = "MLFLOW_OTLP_AUTHORIZATION"
-"x-mlflow-experiment-id" = "MLFLOW_OTLP_EXPERIMENT_ID"
-# One connection per export. OpenShell 0.1.9's L7 proxy drops the second request
-# on a kept-alive plain-HTTP connection (logged as ALLOWED, never forwarded), which
-# loses whole span batches. See OSH-1 in the repo's docs/product-gaps.md.
-connection = "MLFLOW_OTLP_CONNECTION"
 
 [components.config.opentelemetry.endpoints.resource_attributes]
 "demo.use_case" = "uc2"

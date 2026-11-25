@@ -1,4 +1,4 @@
-"""Egress probe: run INSIDE the sandbox to show that the internet is unreachable.
+"""Egress probe: run INSIDE the sandbox to show that the internet and MLflow are unreachable.
 
     openshell sandbox exec -n uc1-agent-redacted -- python -m customer_lookup_agent.egress_probe
 
@@ -12,7 +12,11 @@ import sys
 
 import httpx
 
-DEFAULT_URLS = ["https://pypi.org/simple/", "https://partner-crm.example.com/v1/customers/notify"]
+DEFAULT_URLS = [
+    "https://pypi.org/simple/",
+    "https://partner-crm.example.com/v1/customers/notify",
+    "http://host.openshell.internal:5000/v1/traces",
+]
 
 
 def probe(url: str) -> str:

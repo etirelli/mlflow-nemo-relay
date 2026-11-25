@@ -1,9 +1,9 @@
-"""Offline test harness: a tiny OTLP/HTTP receiver that stands in for MLflow.
+"""Offline test harness: a tiny OTLP/HTTP receiver that stands in for the OpenShell agent trace relay.
 
 The tests run the real agent, with the deterministic scripted model, against
-the real Relay policy files. They capture what Relay would export to MLflow,
-so they check the same telemetry boundary as the live demo without
-containers, an LLM, or an MLflow server.
+the real Relay policy files. They capture what Relay exports to the relay (and
+so, through the collector, to MLflow), which is the same telemetry boundary as
+the live demo, without containers, an LLM, an MLflow server, or OpenShell.
 """
 
 from __future__ import annotations
@@ -23,12 +23,12 @@ DEMO_DIR = Path(__file__).resolve().parents[1]
 
 class OtlpCapture:
     def __init__(self) -> None:
-        self.requests: list[dict] = []  # {"headers": {...}, "body": dict}
+        self.requests: list[dict] = []  # {"path": str, "headers": {...}, "body": dict}
         self._lock = threading.Lock()
 
-    def add(self, headers: dict, body: dict) -> None:
+    def add(self, path: str, headers: dict, body: dict) -> None:
         with self._lock:
-            self.requests.append({"headers": headers, "body": body})
+            self.requests.append({"path": path, "headers": headers, "body": body})
 
     @property
     def spans(self) -> list[dict]:
@@ -50,9 +50,12 @@ def otlp_receiver(tmp_path, monkeypatch):
     class Handler(BaseHTTPRequestHandler):
         def do_POST(self):  # noqa: N802
             raw = self.rfile.read(int(self.headers.get("content-length", 0)))
-            msg = ExportTraceServiceRequest()
-            msg.ParseFromString(raw)
-            capture.add({k.lower(): v for k, v in self.headers.items()}, MessageToDict(msg))
+            body = {}
+            if self.path.endswith("/v1/traces"):
+                msg = ExportTraceServiceRequest()
+                msg.ParseFromString(raw)
+                body = MessageToDict(msg)
+            capture.add(self.path, {k.lower(): v for k, v in self.headers.items()}, body)
             self.send_response(200)
             self.send_header("content-type", "application/x-protobuf")
             self.end_headers()
@@ -64,11 +67,12 @@ def otlp_receiver(tmp_path, monkeypatch):
     threading.Thread(target=server.serve_forever, daemon=True).start()
     port = server.server_address[1]
 
-    # The same variables that relay_runtime.configure_mlflow_routing() exports.
-    monkeypatch.setenv("MLFLOW_OTLP_HOST", "127.0.0.1")
-    monkeypatch.setenv("MLFLOW_OTLP_TRACES_ENDPOINT", f"http://127.0.0.1:{port}/v1/traces")
-    monkeypatch.setenv("MLFLOW_OTLP_AUTHORIZATION", "Basic cmVsYXktYWdlbnQ6dGVzdA==")
-    monkeypatch.setenv("MLFLOW_OTLP_EXPERIMENT_ID", "42")
+    # What a sandbox gets: the OpenShell agent trace relay's address (the receiver plays
+    # it; http://192.0.0.8:4318 inside a sandbox) and the switches `make sandboxes` passes.
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", f"http://127.0.0.1:{port}")
+    for name in ("OTEL_TRACES_EXPORTER", "OTEL_LOGS_EXPORTER", "OTEL_METRICS_EXPORTER"):
+        monkeypatch.setenv(name, "none")
+    monkeypatch.setenv("MLFLOW_EXPERIMENT_ID", "42")
     monkeypatch.setenv("RELAY_TELEMETRY_DIR", str(tmp_path))
     monkeypatch.setenv("SANDBOX_NAME", "test-sandbox")
     monkeypatch.setenv("LLM_PROVIDER", "scripted")

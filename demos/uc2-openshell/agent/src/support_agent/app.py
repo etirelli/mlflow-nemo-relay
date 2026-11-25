@@ -19,7 +19,7 @@ from pydantic import BaseModel, Field
 from support_agent import refunds
 from support_agent.agent import build_agent
 from support_agent.policy import RefundPolicy, is_blocked
-from support_agent.relay_runtime import configure_mlflow_routing, relay_activation
+from support_agent.relay_runtime import configure_relay_export, relay_activation
 from support_agent.settings import get_settings
 from support_agent.tools import is_egress_denied
 
@@ -34,7 +34,7 @@ state: dict = {}
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    state["experiment_id"] = configure_mlflow_routing(settings)
+    state["experiment_id"] = configure_relay_export(settings)
     async with relay_activation(settings):
         policy.register()
         state["agent"] = build_agent(settings)

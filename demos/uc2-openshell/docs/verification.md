@@ -9,12 +9,12 @@
 of the sandboxes, saves `openshell logs` for both sandboxes, and runs the
 egress probe inside `uc2-agent-v2`, all into `./telemetry`.
 
-## `make verify` (26 checks)
+## `make verify` (27 checks)
 
 | # | Check | What it proves |
 |---|---|---|
 | 1 | The trace experiment has traces | — |
-| 2 | Every trace arrived complete (root span present) | No OTLP batch was lost through the sandbox proxy (OSH-1 in the [product gaps report](../../../docs/product-gaps.md#nvidia-openshell)) |
+| 2 | Every trace arrived complete (root span present) | No OTLP batch was lost on the way out, through the OpenShell relay and the collector (OSH-1 in the [product gaps report](../../../docs/product-gaps.md#nvidia-openshell)) |
 | 3 | Both agent versions are traced | Same experiment, same policies |
 | 4 | `GUARDRAIL` spans with allowed **and** rejected decisions | Relay decision export |
 | 5 | A rejection keeps the target, requested arguments, decision, reason and policy version | UC2 gap |
@@ -29,12 +29,13 @@ egress probe inside `uc2-agent-v2`, all into `./telemetry`.
 | 14 | Payments ledger: no refund above $500 and no credit | Nothing refused executed (system of record) |
 | 15 | Traces come from both sandboxes (`demo.sandbox`) | Agents ran in OpenShell |
 | 16 | The sandbox log records `DENIED POST …/v1/credits` | Independent OpenShell evidence |
-| 17 | The egress probe inside the sandbox is refused | Internet, credits API and ledger are unreachable |
-| 18–21 | Evaluation: fewer prohibited attempts, tasks kept, nothing refused executed, judge v2 ≥ v1 | Success criteria |
-| 22 | No SSN in the exported traces | Carried over from UC1 |
-| 23–24 | No SSN in Relay's ATOF files (v1, v2) | Carried over from UC1 |
-| 25 | OTLP without credentials → 401 | Carried over from UC1 |
-| 26 | The agent service account → 403 on a non-granted experiment | Carried over from UC1 |
+| 17 | The egress probe inside the sandbox is refused | Internet, credits API, ledger and MLflow are unreachable |
+| 18 | Every trace carries `openshell.telemetry.source=agent` and an `openshell.sandbox.id` | **Traces left through the OpenShell agent trace relay**; the sandbox has no MLflow route or credentials |
+| 19–22 | Evaluation: fewer prohibited attempts, tasks kept, nothing refused executed, judge v2 ≥ v1 | Success criteria |
+| 23 | No SSN in the exported traces | Carried over from UC1 |
+| 24–25 | No SSN in Relay's ATOF files (v1, v2) | Carried over from UC1 |
+| 26 | OTLP without credentials → 401 | Carried over from UC1 |
+| 27 | The agent service account → 403 on a non-granted experiment | Carried over from UC1 |
 
 Live output, 2026-11-24 (GLM 5.3, clean start, abridged):
 
@@ -76,7 +77,9 @@ Carried over from UC1
 26/26 checks passed.
 ```
 
-## `make test` (offline, 13 tests)
+That output predates the trace relay, which added check 18.
+
+## `make test` (offline, 14 tests)
 
 The conftest starts a fake payments service. `POST /v1/refunds` executes and
 is recorded. `POST /v1/credits` gets the answer that OpenShell's L7 engine
@@ -94,3 +97,7 @@ New in this permutation (`tests/test_sandbox_layer.py`):
 
 The 10 `uc2-community` tests still pass (`tests/test_policy.py`), now with
 refunds going over HTTP.
+
+`tests/test_trace_relay.py`: with the OTLP receiver playing the OpenShell agent
+trace relay, the agent sends only `POST /v1/traces`, each span once, with no
+MLflow credentials and no compression.

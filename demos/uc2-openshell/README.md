@@ -15,9 +15,10 @@ policies stay fixed throughout.
 
 | Component | Version | Role |
 |---|---|---|
-| [NeMo Relay](https://github.com/NVIDIA/NeMo-Relay) | 0.11.0 | Tool guardrail `refund-limit-v1`, decision telemetry, PII redaction, OTLP export |
-| [NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell) | 0.1.9 | Sandbox per agent version: L7 egress policy, filesystem and process policy, LLM credential injection |
+| [NeMo Relay](https://github.com/NVIDIA/NeMo-Relay) | 0.11.2 | Tool guardrail `refund-limit-v1`, decision telemetry, PII redaction, OTLP export |
+| [NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell) | 0.1.9 | Sandbox per agent version: L7 egress policy, filesystem and process policy, LLM credential injection, agent trace relay |
 | [MLflow](https://github.com/mlflow/mlflow) | 3.17.2 | Traces with both decisions; GenAI evaluation (code scorers + LLM judge); evaluation dataset |
+| [OpenTelemetry Collector](https://github.com/open-telemetry/opentelemetry-collector-contrib) (contrib) | 0.165.0 | Receives the traces from the OpenShell relay, adds the MLflow service account and experiment, forwards to MLflow |
 | LangGraph / LangChain | 1.2 / 1.4 | The agent, in two revisions |
 | Any OpenAI-compatible LLM | — | Agents (through an OpenShell provider) and judge. Validated with GLM 5.3. |
 
@@ -67,11 +68,19 @@ case that went through. That's the per-call limit gap from `uc2-community`,
 and neither layer is designed to catch it. LLM results vary between runs.
 The direction is what matters.
 
+7. **Traces leave through the OpenShell agent trace relay.** Relay exports to
+   the address OpenShell injects into the sandbox (`http://192.0.0.8:4318`).
+   The supervisor stamps `openshell.sandbox.id` on each trace and forwards it
+   to the collector, which adds the MLflow service account and experiment.
+   The sandbox has no MLflow credentials and no MLflow rule in its policy.
+
 ## Quick start
 
 Prerequisites:
 - the OpenShell CLI and gateway (`brew install openshell`, then
   `brew services start openshell`);
+- the OpenShell agent trace relay, turned on once in the gateway config
+  (`make gateway-config` prints the setting and where it goes);
 - Podman (with `podman compose`) or Docker, matching the gateway's driver;
 - uv;
 - an OpenAI-compatible LLM endpoint with tool calling.
@@ -89,6 +98,7 @@ make demo      # scenarios, evaluation (v1 vs v2), evidence collection, verifica
 | http://localhost:5000 | MLflow (`admin`). `uc2-openshell-refund-agent` has the traces, `uc2-openshell-refund-agent-eval` the evaluation runs and dataset. |
 | `make ledger` | The payments ledger: every money movement that actually executed |
 | `make deny-log` / `make probe` | What the sandbox denied / what a process inside it can't reach |
+| `make collector-logs` | The collector between the OpenShell relay and MLflow |
 
 To rehearse without an LLM, run `make up-scripted`. The scripted v1 always
 tries the credit.
@@ -98,9 +108,9 @@ tries the credit.
 | Doc | For |
 |---|---|
 | [docs/demo-script.md](docs/demo-script.md) | Presenters: a 7-minute talk track |
-| [docs/architecture.md](docs/architecture.md) | The two layers, the payments service, trace shapes, the LLM provider |
+| [docs/architecture.md](docs/architecture.md) | The two layers, the payments service, trace shapes, the trace path through the OpenShell relay, the LLM provider |
 | [docs/evaluation.md](docs/evaluation.md) | Dataset, scorers, LLM judge |
-| [docs/verification.md](docs/verification.md) | `make verify` (26 checks) and the offline tests |
+| [docs/verification.md](docs/verification.md) | `make verify` (27 checks) and the offline tests |
 | [Product gaps report](../../docs/product-gaps.md) | What was validated, and findings for OpenShell, Relay and MLflow (consolidated, repo root) |
 | [docs/troubleshooting.md](docs/troubleshooting.md) | Common problems |
 
@@ -108,14 +118,16 @@ tries the credit.
 
 ```
 uc2-openshell/
-├── compose.yaml              # mlflow, mlflow-bootstrap, payments (outside the sandboxes)
+├── compose.yaml              # mlflow, mlflow-bootstrap, payments, otel-collector (outside the sandboxes)
 ├── Makefile                  # up / provider / sandboxes / scenarios / eval / evidence / verify / demo / down / clean
 ├── .env.example              # LLM endpoint/model/key, policy limit, ports
 ├── openshell/
-│   ├── policy.yaml           # sandbox policy: payments POST /v1/refunds only, MLflow OTLP only
+│   ├── policy.yaml           # sandbox policy: payments POST /v1/refunds only; no MLflow route
+│   ├── gateway-agent-relay.toml  # one-time gateway setting: the agent trace relay (`make gateway-config`)
 │   └── providers/llm.yaml.tmpl  # LLM provider profile (rendered from .env by `make provider`)
 ├── payments/                 # payments service: /v1/refunds, /v1/credits, /v1/ledger (stdlib)
-├── relay/plugins.toml        # Relay telemetry: OTLP -> MLflow + pii_redaction
+├── relay/plugins.toml        # Relay telemetry: OTLP -> OpenShell agent trace relay + pii_redaction
+├── otel/collector.yaml       # collector: relay -> MLflow, with the service account and experiment header
 ├── mlflow/                   # upstream MLflow with basic auth + bootstrap
 ├── agent/
 │   ├── Containerfile         # OpenShell BYOC image (non-root, /sandbox workspace)
@@ -127,6 +139,6 @@ uc2-openshell/
 │       ├── verify.py         # `make verify`
 │       ├── egress_probe.py   # run inside the sandbox: what is refused
 │       └── …                 # app, refunds (per-request record), relay_runtime, scripted model, scenarios, UI
-├── tests/                    # offline: both layers with a fake payments service, enforcement, redaction
+├── tests/                    # offline: both layers with a fake payments service, enforcement, redaction, trace relay
 └── docs/
 ```

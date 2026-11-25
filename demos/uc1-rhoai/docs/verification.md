@@ -23,10 +23,11 @@ against the MLflow gateway (`MLFLOW_PUBLIC_URI`). It authenticates as **you**
 | 6 | The error still says `TimeoutError … did not respond` | *The failure remains understandable* |
 | 7 | **No SSN** anywhere in the redacted traces | *The synthetic SSN is absent from exported telemetry* |
 | 8 | `[REDACTED-SSN]` markers are present | The sanitizer ran |
-| 9 | No SSN in Relay's ATOF file, copied out of the pod | The sanitized stream is clean at the source |
-| 10 | **Control:** the baseline experiment contains SSNs | Check 7 is meaningful |
-| 11 | OTLP without a token is rejected (gateway: **302** to the OpenShift login) | *Authenticated routing* (gap 3) |
-| 12 | The agent's service account token **cannot** write to `uc1-rhoai-not-granted` in the same workspace (**403**) | *…to the correct project and experiment* (gap 3, least privilege) |
+| 9 | **LLM protection:** in requests with `protect_llm` on, every LLM span input carries an SSN reference and neither an SSN nor `[REDACTED-SSN]`, and `lookup_customer` succeeded | The model received a reference, and the tool still got the real SSN |
+| 10 | No SSN in Relay's ATOF file, copied out of the pod | The sanitized stream is clean at the source |
+| 11 | **Control:** the baseline experiment contains SSNs | Check 7 is meaningful |
+| 12 | OTLP without a token is rejected (gateway: **302** to the OpenShift login) | *Authenticated routing* (gap 3) |
+| 13 | The agent's service account token **cannot** write to `uc1-rhoai-not-granted` in the same workspace (**403**) | *…to the correct project and experiment* (gap 3, least privilege) |
 
 Live output, 2026-11-23 (OpenShift AI 3.6.0-ea.2, GLM 5.3):
 
@@ -59,6 +60,9 @@ Authenticated routing
 12/12 checks passed.
 ```
 
+That output predates the opt-in LLM protection, which added check 9;
+`make scenarios` produces the protected trace it needs.
+
 Traces accumulate across runs. The checks hold for any number of traces.
 
 ## `make test` (offline)
@@ -72,6 +76,9 @@ an in-process OTLP receiver:
 - `test_tls_block_is_optional`: the `[tls]` table appears only when a CA is set.
 - `test_otlp_endpoint_is_not_under_the_static_prefix`: `…/mlflow` gives an OTLP endpoint of `…/v1/traces`.
 - `test_policy_files_render`: no unresolved `${VAR}`.
+- `test_llm_protection.py`: with `protect_llm` on, the model only ever sees
+  `SSN_REF_1`, the tool and the user get the real SSN, and the LLM spans
+  record the reference.
 
 ## Manual spot checks
 

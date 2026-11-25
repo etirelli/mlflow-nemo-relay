@@ -13,7 +13,7 @@ The UC1 demo running on **Red Hat OpenShift AI**:
 |---|---|---|
 | Red Hat OpenShift AI | 3.6.0-ea.2 on OpenShift 4.22 (ROSA HCP) | Platform. MLflow operator with workspaces and Kubernetes authorization. |
 | MLflow (OpenShift AI build) | 3.15.2 server | Trace store. `kubernetes-auth`, one workspace per namespace, OTLP ingestion |
-| [NeMo Relay](https://github.com/NVIDIA/NeMo-Relay) | 0.11.0 | Managed tool and LLM execution, `pii_redaction`, OTLP export over TLS |
+| [NeMo Relay](https://github.com/NVIDIA/NeMo-Relay) | 0.11.2 | Managed tool and LLM execution, `pii_redaction`, OTLP export over TLS |
 | LangGraph / LangChain | 1.2 / 1.5 | The agent |
 | Any OpenAI-compatible LLM with tool calling | — | Configured locally. Validated with GLM 5.3 on a hosted endpoint. |
 
@@ -39,8 +39,15 @@ and `make test` passes 9 offline tests.
    passwords. Traffic goes over TLS to the in-cluster service. The agent's
    Role allows writing to **its two experiments only**: it can't create
    experiments or touch others in the same workspace.
-6. **Proof.** `make verify` reads everything back from MLflow and checks the
-   success criteria, 12 checks in all.
+6. **Keep the SSN from the LLM (opt-in).** Telemetry redaction doesn't stop
+   the LLM itself from receiving the SSN. Tick *Keep SSN from the LLM* in the
+   chat UI (or send `"protect_llm": true`), and two Relay request intercepts,
+   registered on that request's scope only, replace the SSN with a reference
+   such as `SSN_REF_1` before the model sees it and swap it back before the
+   tool runs. The LLM span in MLflow then shows the reference the model
+   received.
+7. **Proof.** `make verify` reads everything back from MLflow and checks the
+   success criteria, 13 checks in all.
 
 ## Quick start
 
@@ -64,7 +71,7 @@ oc create secret generic llm-credentials -n uc1-rhoai --from-literal=api-key="$K
 # 3. Deploy and run
 make up              # check, create experiments, apply template, build image in-cluster, roll out
 make port-forward    # chat UI on http://localhost:8000 (baseline on :8001)
-make demo            # scenarios + 12 checks
+make demo            # scenarios + 13 checks
 ```
 
 `make up` prints the MLflow link, which looks like
@@ -97,7 +104,7 @@ See [docs/configuration.md](docs/configuration.md).
 | [docs/demo-script.md](docs/demo-script.md) | Presenters: a 5-minute talk track |
 | [docs/architecture.md](docs/architecture.md) | Data flow, MLflow workspaces and Kubernetes auth, token rotation, TLS |
 | [docs/configuration.md](docs/configuration.md) | `config.env`, template parameters, LLM choices |
-| [docs/verification.md](docs/verification.md) | The 12 checks and the offline tests |
+| [docs/verification.md](docs/verification.md) | The 13 checks and the offline tests |
 | [Product gaps report](../../docs/product-gaps.md) | Proposal gap 3 on OpenShift AI, and findings (consolidated, repo root) |
 | [docs/troubleshooting.md](docs/troubleshooting.md) | Common problems |
 
@@ -112,6 +119,7 @@ uc1-rhoai/
 ├── agent/                  # same agent as uc1-community + OpenShift AI auth/workspace/TLS wiring
 │   └── src/customer_lookup_agent/
 │       ├── relay_runtime.py    # rotating SA token -> Bearer header file, workspace + experiment routing
+│       ├── llm_protection.py   # opt-in: Relay request intercepts keep the SSN out of the LLM request
 │       ├── bootstrap_rhoai.py  # `make bootstrap`: creates experiments as the cluster user
 │       └── verify.py           # `make verify`
 ├── tests/                  # offline: redaction, headers, token rotation, OTLP endpoint

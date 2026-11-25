@@ -1,16 +1,13 @@
-"""NeMo Relay activation and MLflow routing setup."""
+"""NeMo Relay activation, with traces leaving the sandbox through the OpenShell agent trace relay."""
 
 from __future__ import annotations
 
-import base64
 import logging
 import os
 import re
 import tempfile
-import time
 from contextlib import asynccontextmanager
 from pathlib import Path
-from urllib.parse import urlparse
 
 import nemo_relay
 
@@ -21,52 +18,32 @@ log = logging.getLogger(__name__)
 _PLACEHOLDER = re.compile(r"\$\{([A-Z0-9_]+)\}")
 
 
-def resolve_experiment_id(settings: Settings, attempts: int = 30, delay: float = 2.0) -> str:
-    """Return the id of the configured MLflow experiment, creating it if needed.
+def configure_relay_export(settings: Settings) -> str:
+    """Check that the OpenShell agent trace relay is on; export the TOML variables.
 
-    MLflow's OTLP endpoint routes traces by experiment *id*, through the
-    ``x-mlflow-experiment-id`` header. Humans think in experiment names, so we
-    resolve the id here. The MLflow client reads the agent's basic-auth
-    credentials from ``MLFLOW_TRACKING_USERNAME`` and ``MLFLOW_TRACKING_PASSWORD``.
+    With ``[openshell.gateway.otlp.agent]`` enabled on the gateway, OpenShell sets
+    ``OTEL_EXPORTER_OTLP_ENDPOINT`` in every sandbox process, and the Relay policy file
+    exports there. The supervisor accepts OTLP at that address, stamps
+    ``openshell.sandbox.id`` on each resource, and forwards the traces to the demo's
+    collector, which holds the MLflow credentials and routes each trace to the
+    experiment of its Relay mode. The sandbox needs no MLflow credentials and no
+    network route to MLflow.
+
+    ``make sandboxes`` also sets ``OTEL_TRACES_EXPORTER=none`` (and the logs and metrics
+    equivalents): with that endpoint set, Relay would otherwise add its automatic
+    exporter and export every span a second time.
+
+    Returns the MLflow experiment id, which is used only for UI links.
     """
-    from mlflow import MlflowClient
-
-    client = MlflowClient(tracking_uri=settings.mlflow_tracking_uri)
-    last_error: Exception | None = None
-    for _ in range(attempts):
-        try:
-            experiment = client.get_experiment_by_name(settings.mlflow_experiment_name)
-            if experiment is not None:
-                return experiment.experiment_id
-            return client.create_experiment(settings.mlflow_experiment_name)
-        except Exception as exc:  # MLflow may still be starting
-            last_error = exc
-            log.info("Waiting for MLflow at %s (%s)", settings.mlflow_tracking_uri, exc)
-            time.sleep(delay)
-    raise RuntimeError(f"Could not resolve MLflow experiment: {last_error}")
-
-
-def configure_mlflow_routing(settings: Settings) -> str:
-    """Export the env vars that the Relay plugin TOML references."""
-    experiment_id = resolve_experiment_id(settings)
-    parsed = urlparse(settings.mlflow_tracking_uri)
-    os.environ["MLFLOW_OTLP_HOST"] = parsed.hostname or "localhost"
-    os.environ["MLFLOW_OTLP_TRACES_ENDPOINT"] = settings.mlflow_tracking_uri.rstrip("/") + "/v1/traces"
-    os.environ["MLFLOW_OTLP_EXPERIMENT_ID"] = experiment_id
-    user = os.environ.get("MLFLOW_TRACKING_USERNAME")
-    password = os.environ.get("MLFLOW_TRACKING_PASSWORD")
-    if user and password:
-        token = base64.b64encode(f"{user}:{password}".encode()).decode()
-        os.environ["MLFLOW_OTLP_AUTHORIZATION"] = f"Basic {token}"
-    else:
+    if not os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT", "").strip():
         raise RuntimeError(
-            "MLFLOW_TRACKING_USERNAME and MLFLOW_TRACKING_PASSWORD are required: "
-            "the demo MLflow server runs with basic authentication."
+            "OTEL_EXPORTER_OTLP_ENDPOINT is not set, so the OpenShell agent trace relay is off. "
+            "Enable it on the gateway (make gateway-config), then recreate the sandbox."
         )
     os.environ.setdefault("RELAY_TELEMETRY_DIR", "/sandbox/telemetry")
     os.environ.setdefault("SANDBOX_NAME", "none")
     Path(os.environ["RELAY_TELEMETRY_DIR"]).mkdir(parents=True, exist_ok=True)
-    return experiment_id
+    return settings.mlflow_experiment_id
 
 
 def render_plugins_file(template_path: str) -> str:

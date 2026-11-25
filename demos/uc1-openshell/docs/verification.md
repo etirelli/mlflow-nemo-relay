@@ -32,16 +32,18 @@ admin, reads every trace back, and checks:
 | 6 | The lookup error span's output still says `TimeoutError … did not respond` | *the failure remains understandable* / *error context* |
 | 7 | **No SSN anywhere** in the exported traces: every span, attribute, input/output, event, tag and preview. It checks the known synthetic SSNs (dashed and bare digits) and any `NNN-NN-NNNN` value. | *The synthetic SSN is absent from exported telemetry* |
 | 8 | `[REDACTED-SSN]` markers are present | Proves the sanitizer ran, rather than the data simply being absent |
-| 9 | No SSN in Relay's ATOF event file, copied out of the sandbox | The sanitized canonical stream is clean at the source |
-| 10 | **Control:** the baseline experiment *does* contain SSNs | Proves check 7 is meaningful |
-| 11 | `POST /v1/traces` without credentials gets **401** | *Authenticated routing* |
-| 12 | The agent's service account posting to a non-granted experiment gets **403** | *…to the correct project and experiment* (project isolation) |
-| 13 | The traces carry `demo.sandbox = uc1-agent-redacted` | The evidence came from the sandboxed agent |
-| 14 | `notify_partner_crm` is a `TOOL` span with status **ERROR**, and its output contains `EgressBlocked` | A denied action is visible and explained in MLflow (bridge to UC2) |
-| 15 | The OpenShell sandbox log has a denial line for `partner-crm.example.com` | The *boundary* refused the connection, not the agent |
-| 16 | The egress probe inside the sandbox reports `BLOCKED` for PyPI and the partner CRM | Default-deny egress for every process using the agent's interpreter |
+| 9 | **LLM protection:** in requests with `protect_llm` on, every LLM span input carries an SSN reference and neither an SSN nor `[REDACTED-SSN]`, and `lookup_customer` succeeded | The model received a reference, and the tool still got the real SSN |
+| 10 | No SSN in Relay's ATOF event file, copied out of the sandbox | The sanitized canonical stream is clean at the source |
+| 11 | **Control:** the baseline experiment *does* contain SSNs | Proves check 7 is meaningful |
+| 12 | `POST /v1/traces` without credentials gets **401** | *Authenticated routing* |
+| 13 | The agent's service account posting to a non-granted experiment gets **403** | *…to the correct project and experiment* (project isolation) |
+| 14 | The traces carry `demo.sandbox = uc1-agent-redacted` | The evidence came from the sandboxed agent |
+| 15 | `notify_partner_crm` is a `TOOL` span with status **ERROR**, and its output contains `EgressBlocked` | A denied action is visible and explained in MLflow (bridge to UC2) |
+| 16 | The OpenShell sandbox log has a denial line for `partner-crm.example.com` | The *boundary* refused the connection, not the agent |
+| 17 | The egress probe inside the sandbox reports `BLOCKED` for PyPI, the partner CRM and MLflow | Default-deny egress for every process using the agent's interpreter |
+| 18 | Every trace, redacted and baseline, carries `openshell.telemetry.source=agent` and an `openshell.sandbox.id` | **Traces left through the OpenShell agent trace relay**; the sandbox has no MLflow route or credentials |
 
-Checks 15 and 16 are skipped, with a note, if their evidence file is missing.
+Checks 16 and 17 are skipped, with a note, if their evidence file is missing.
 Check 7 also covers the blocked call: the SSN that `notify_partner_crm` echoes
 in its error is redacted.
 
@@ -84,6 +86,9 @@ Authenticated routing
 16/16 checks passed.
 ```
 
+That output predates the opt-in LLM protection and the trace relay, which
+added checks 9 and 18.
+
 The exit code is non-zero if any check fails, so `make demo` works as a smoke test.
 
 ## `make test`: offline suite
@@ -97,8 +102,6 @@ that receiver and drives the agent with the scripted model:
   markers.
 - `test_tool_outcomes_and_parentage_survive_export`: one OK and one ERROR tool
   span, positive durations, and a parent chain to the root.
-- `test_export_is_authenticated_and_routed`: the `Authorization` and
-  `x-mlflow-experiment-id` headers are sent.
 - `test_baseline_control_leaks_ssn`: the control.
 - `test_policy_files_render`: no unresolved `${VAR}` placeholders.
 - `test_sandbox_egress.py::test_blocked_egress_is_a_readable_error_span`: a
@@ -107,6 +110,13 @@ that receiver and drives the agent with the scripted model:
   denial, and the echoed SSN is redacted.
 - `test_sandbox_egress.py::test_sandbox_name_is_exported`: the sandbox name
   reaches the exported telemetry.
+- `test_trace_relay.py`: with the receiver playing the OpenShell agent trace
+  relay, both Relay modes send only `POST /v1/traces`, each span once, with no
+  MLflow credentials or compression and with `demo.relay_mode` for the
+  collector's routing.
+- `test_llm_protection.py`: with `protect_llm` on, the model only ever sees
+  `SSN_REF_1`, the tool and the user get the real SSN, and the LLM spans
+  record the reference.
 
 ```bash
 make test          # equivalent to: cd agent && uv run --extra test pytest -q

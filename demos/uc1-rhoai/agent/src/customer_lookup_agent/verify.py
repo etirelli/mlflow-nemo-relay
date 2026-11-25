@@ -10,6 +10,8 @@ Reads traces back from MLflow (as an admin) and checks:
     experiment, or in the redacted ATOF file, and redaction markers are present.
   * Control: the baseline experiment DOES contain the SSNs, which proves the
     check above is meaningful.
+  * LLM protection (opt-in per request): the LLM saw SSN references instead
+    of SSNs, and the lookup still got the real value.
   * Authenticated routing (OpenShift AI): OTLP export without a token is
     rejected, and the agent's service account token cannot write to an
     experiment in the same workspace that its Role does not name.
@@ -36,10 +38,15 @@ import httpx
 from mlflow import MlflowClient
 
 from customer_lookup_agent.customer_db import ALL_SYNTHETIC_SSNS
+from customer_lookup_agent.llm_protection import MODEL_NOTE
 
 SSN_PATTERN = re.compile(r"\b\d{3}[- ]\d{2}[- ]\d{4}\b")
 REDACTION_MARKER = "[REDACTED-SSN]"
+SSN_REFERENCE = "SSN_REF_"
+# MLflow may keep span metadata as a JSON-encoded attribute, so match escaped quotes too.
+PROTECTION_METADATA = re.compile(r'demo\.llm_protection[\\"]*\s*:\s*[\\"]*on\b')
 ROOT_SPAN = "customer-lookup-request"
+LOOKUP_TOOL = "lookup_customer"
 
 
 @dataclass
@@ -121,6 +128,35 @@ def check_trace_structure(report: Report, traces) -> None:
         )
 
 
+def is_protected(trace) -> bool:
+    """True when the request opted in to LLM protection (root span metadata ``demo.llm_protection``)."""
+    return PROTECTION_METADATA.search(trace.to_json()) is not None
+
+
+def llm_inputs(traces) -> list[str]:
+    """LLM span inputs, without the model note: the note itself names an example reference."""
+    return [
+        json.dumps(s.inputs, default=str).replace(MODEL_NOTE, "")
+        for t in traces
+        for s in t.data.spans
+        if s.span_type == "LLM"
+    ]
+
+
+def check_llm_protection(report: Report, traces) -> None:
+    protected = [t for t in traces if is_protected(t)]
+    seen = llm_inputs(protected)
+    lookups = [s for t in protected for s in t.data.spans if s.span_type == "TOOL" and s.name == LOOKUP_TOOL]
+    report.check(
+        "With LLM protection on, the LLM saw SSN references only, and the lookup still succeeded",
+        bool(seen)
+        and all(SSN_REFERENCE in i and not find_ssns(i) and REDACTION_MARKER not in i for i in seen)
+        and any(s.status.status_code == "OK" for s in lookups),
+        f"{len(seen)} LLM request(s) across {len(protected)} protected trace(s); "
+        f"{LOOKUP_TOOL} statuses: {[s.status.status_code for s in lookups]}",
+    )
+
+
 def check_routing(report: Report, client: MlflowClient, tracking_uri: str, experiment_id: str) -> None:
     url = tracking_uri.rstrip("/") + "/v1/traces"
     workspace = os.environ.get("MLFLOW_WORKSPACE", "")
@@ -194,6 +230,7 @@ def main() -> None:
             markers > 0,
             f"{markers} occurrence(s) of {REDACTION_MARKER}",
         )
+        check_llm_protection(report, traces)
 
     atof = Path(args.telemetry_dir) / "atof-redacted.jsonl"
     if atof.exists():

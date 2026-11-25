@@ -10,12 +10,16 @@ Reads traces back from MLflow (as an admin) and checks:
     experiment, or in the redacted ATOF file, and redaction markers are present.
   * Control: the baseline experiment DOES contain the SSNs, which proves the
     check above is meaningful.
+  * LLM protection (opt-in per request): the LLM saw SSN references instead
+    of SSNs, and the lookup still got the real value.
   * Authenticated routing: OTLP export without credentials is rejected, and the
     agent's service account cannot write to an experiment it was not granted.
   * OpenShell sandbox: traces come from inside the sandbox; the partner CRM
     sync shows up as an ERROR tool span whose (redacted) output names the
     egress denial; the sandbox log records the denied connection; and a probe
     run inside the sandbox could not reach the internet.
+  * Trace path: every trace arrived through the OpenShell agent trace relay
+    (OpenShell stamped openshell.telemetry.source=agent and openshell.sandbox.id).
 
 Runs on the laptop. `make verify` first collects the sandbox evidence
 (`make evidence`: ATOF files, OpenShell logs, egress probe) into ./telemetry.
@@ -37,11 +41,16 @@ import httpx
 from mlflow import MlflowClient
 
 from customer_lookup_agent.customer_db import ALL_SYNTHETIC_SSNS
+from customer_lookup_agent.llm_protection import MODEL_NOTE
 from customer_lookup_agent.tools import EGRESS_BLOCKED
 
 SSN_PATTERN = re.compile(r"\b\d{3}[- ]\d{2}[- ]\d{4}\b")
 REDACTION_MARKER = "[REDACTED-SSN]"
+SSN_REFERENCE = "SSN_REF_"
+# MLflow may keep span metadata as a JSON-encoded attribute, so match escaped quotes too.
+PROTECTION_METADATA = re.compile(r'demo\.llm_protection[\\"]*\s*:\s*[\\"]*on\b')
 ROOT_SPAN = "customer-lookup-request"
+LOOKUP_TOOL = "lookup_customer"
 CRM_TOOL = "notify_partner_crm"
 CRM_HOST = os.environ.get("PARTNER_CRM_HOST", "partner-crm.example.com")
 
@@ -125,6 +134,35 @@ def check_trace_structure(report: Report, traces) -> None:
     )
 
 
+def is_protected(trace) -> bool:
+    """True when the request opted in to LLM protection (root span metadata ``demo.llm_protection``)."""
+    return PROTECTION_METADATA.search(trace.to_json()) is not None
+
+
+def llm_inputs(traces) -> list[str]:
+    """LLM span inputs, without the model note: the note itself names an example reference."""
+    return [
+        json.dumps(s.inputs, default=str).replace(MODEL_NOTE, "")
+        for t in traces
+        for s in t.data.spans
+        if s.span_type == "LLM"
+    ]
+
+
+def check_llm_protection(report: Report, traces) -> None:
+    protected = [t for t in traces if is_protected(t)]
+    seen = llm_inputs(protected)
+    lookups = [s for t in protected for s in t.data.spans if s.span_type == "TOOL" and s.name == LOOKUP_TOOL]
+    report.check(
+        "With LLM protection on, the LLM saw SSN references only, and the lookup still succeeded",
+        bool(seen)
+        and all(SSN_REFERENCE in i and not find_ssns(i) and REDACTION_MARKER not in i for i in seen)
+        and any(s.status.status_code == "OK" for s in lookups),
+        f"{len(seen)} LLM request(s) across {len(protected)} protected trace(s); "
+        f"{LOOKUP_TOOL} statuses: {[s.status.status_code for s in lookups]}",
+    )
+
+
 def check_routing(report: Report, tracking_uri: str, experiment_id: str) -> None:
     url = tracking_uri.rstrip("/") + "/v1/traces"
     headers = {"content-type": "application/x-protobuf", "x-mlflow-experiment-id": experiment_id}
@@ -199,6 +237,29 @@ def check_sandbox(report: Report, traces, telemetry_dir: Path, sandbox: str) -> 
         print(f"  (no {probe.name}; run `make evidence` to run the egress probe)")
 
 
+def span_attribute(span, key: str):
+    value = (span.attributes or {}).get(key)
+    if isinstance(value, str):
+        try:
+            return json.loads(value)
+        except ValueError:
+            return value
+    return value
+
+
+def check_relay(report: Report, traces) -> None:
+    """Traces left through the OpenShell agent trace relay, which stamps every resource it forwards."""
+    roots = [s for t in traces for s in t.data.spans if s.name == ROOT_SPAN]
+    relayed = [s for s in roots if span_attribute(s, "openshell.telemetry.source") == "agent"]
+    relayed = [s for s in relayed if span_attribute(s, "openshell.sandbox.id")]
+    sandbox_ids = {str(span_attribute(s, "openshell.sandbox.id")) for s in relayed}
+    report.check(
+        "Every trace arrived through the OpenShell agent trace relay (openshell.telemetry.source=agent)",
+        bool(roots) and len(relayed) == len(roots),
+        f"{len(relayed)}/{len(roots)} trace(s) stamped by the relay, from {len(sandbox_ids)} sandbox id(s)",
+    )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -241,6 +302,7 @@ def main() -> None:
             markers > 0,
             f"{markers} occurrence(s) of {REDACTION_MARKER}",
         )
+        check_llm_protection(report, traces)
 
     atof = Path(args.telemetry_dir) / "atof-redacted.jsonl"
     if atof.exists():
@@ -264,6 +326,9 @@ def main() -> None:
     if traces:
         print(f"\nOpenShell sandbox: {args.sandbox}")
         check_sandbox(report, traces, Path(args.telemetry_dir), args.sandbox)
+
+    print("\nTrace path: OpenShell agent trace relay -> collector -> MLflow")
+    check_relay(report, traces + base_traces)
 
     if exp_id:
         print("\nAuthenticated routing")

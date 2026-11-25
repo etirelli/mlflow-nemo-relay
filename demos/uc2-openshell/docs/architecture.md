@@ -14,16 +14,17 @@ flowchart LR
         guard -. "decision events" .-> pii["Relay pii_redaction<br/>+ OTLP exporter"]
     end
 
-    subgraph supervisor["OpenShell supervisor (egress policy, L7)"]
+    subgraph supervisor["OpenShell supervisor (egress policy, L7; agent trace relay)"]
         allow1["POST /v1/refunds ✅"]
         deny1["POST /v1/credits ❌ 403 policy_denied"]
-        allow2["POST /v1/traces ✅"]
         allow3["POST …/chat/completions ✅<br/>(provider injects the API key)"]
+        relay["agent trace relay 192.0.0.8:4318<br/>stamps openshell.sandbox.id"]
     end
 
     tools --> allow1 --> payments["payments service :8090<br/>(compose) ledger"]
     tools --> deny1
-    pii --> allow2 --> mlflow["MLflow :5000 (compose)<br/>uc2-openshell-refund-agent"]
+    pii --> relay --> collector["otel-collector :4318 (compose)<br/>adds the MLflow service account"]
+    collector --> mlflow["MLflow :5000 (compose)<br/>uc2-openshell-refund-agent"]
     app --> allow3 --> llm[("LLM endpoint<br/>OpenAI-compatible")]
 
     evalr["make eval / make verify<br/>(laptop)"] -->|"same requests"| app
@@ -148,8 +149,42 @@ limit).
 
 ## Telemetry and redaction
 
-As in UC1/UC2, `relay/plugins.toml` exports OpenInference-shaped OTLP to
-MLflow (basic auth, `x-mlflow-experiment-id`), and `pii_redaction` removes
-SSNs before export. The resource attributes carry `demo.agent_version`,
-`demo.policy` and `demo.sandbox`. Relay's local ATOF file lives in
-`/sandbox/telemetry` inside each sandbox; `make evidence` copies it out.
+As in UC1/UC2, `relay/plugins.toml` exports OpenInference-shaped OTLP, and
+`pii_redaction` removes SSNs before export. Here the export goes through the
+OpenShell agent trace relay, described below. The resource attributes carry
+`demo.agent_version`, `demo.policy` and `demo.sandbox`. Relay's local ATOF file
+lives in `/sandbox/telemetry` inside each sandbox; `make evidence` copies it out.
+
+## The trace path: OpenShell agent trace relay
+
+The traces don't use a network rule. With `[openshell.gateway.otlp.agent]`
+turned on in the gateway (a one-time setting,
+[`openshell/gateway-agent-relay.toml`](../openshell/gateway-agent-relay.toml),
+printed by `make gateway-config`), OpenShell sets
+`OTEL_EXPORTER_OTLP_ENDPOINT=http://192.0.0.8:4318` in every sandbox process.
+That address is served by the supervisor inside the sandbox boundary:
+
+1. The Relay policy file exports to that address
+   (`endpoint = "${OTEL_EXPORTER_OTLP_ENDPOINT}"`). `make sandboxes` also sets
+   `OTEL_TRACES_EXPORTER=none`, plus the logs and metrics equivalents: with an
+   endpoint variable set, Relay would otherwise add its automatic `gen_ai`
+   exporter and export every span twice. The compression setting OpenShell
+   injects (`none`) needs Relay 0.11.1 or later
+   ([REL-16](../../../docs/product-gaps.md#nemo-relay)).
+2. The supervisor stamps `openshell.sandbox.id` and
+   `openshell.telemetry.source=agent` on each resource, replacing whatever the
+   agent set, and forwards the batch to the demo's collector at
+   `host.openshell.internal:4318`.
+3. The collector ([`otel/collector.yaml`](../otel/collector.yaml)) copies those
+   two attributes onto every span, adds the MLflow service account (Basic auth)
+   and the `x-mlflow-experiment-id` header, and exports to MLflow. It retries
+   failed exports; the relay makes one attempt per batch.
+
+What that buys:
+
+| | Before (direct export) | Now (agent trace relay) |
+|---|---|---|
+| MLflow credentials in the sandbox | Service account password in `--env`, visible to `openshell sandbox get` | None |
+| Network route from the sandbox to MLflow | L7 rule for `/v1/traces` and the experiment API | None: `policy.yaml` has no MLflow rule, and the egress probe shows MLflow refused |
+| Which sandbox a trace came from | `demo.sandbox`, set by the agent | `openshell.sandbox.id`, set by OpenShell; the agent can't forge it |
+| Lost span batches through the L7 proxy | Worked around with `Connection: close` | Not on this path |

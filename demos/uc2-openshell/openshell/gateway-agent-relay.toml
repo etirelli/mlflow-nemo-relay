@@ -1,0 +1,31 @@
+# OpenShell gateway setting: the agent trace relay (one-time, per laptop).
+#
+# The demo's agents export their traces through it, so the sandboxes need no
+# MLflow credentials and no network route to MLflow. Nothing here is secret.
+#
+# Add the table below to the gateway's config file, then restart the gateway
+# and recreate the sandboxes (`make sandboxes`). `make gateway-config` prints it.
+#
+# A new file must start with the schema version, or the gateway fails its
+# config preflight (`miss_version`):
+#
+#   [openshell]
+#   version = 2
+#
+#   macOS (Homebrew)       ~/.config/openshell/gateway.toml, or $(brew --prefix)/var/openshell/gateway.toml
+#                          brew services restart openshell
+#   Linux (install script) ~/.config/openshell/gateway.toml
+#                          systemctl --user restart openshell-gateway
+#   Linux (snap)           ~/snap/openshell/common/.config/openshell/gateway.toml
+#                          systemctl --user restart snap.openshell.user-gateway.service
+#
+# While the relay is on, OpenShell sets OTEL_EXPORTER_OTLP_ENDPOINT=http://192.0.0.8:4318
+# in every sandbox process. The supervisor accepts OTLP there, stamps
+# openshell.sandbox.id and openshell.telemetry.source=agent on each resource, and
+# forwards the batch to the endpoint below: the demo's OpenTelemetry Collector
+# (compose service otel-collector), which adds the MLflow credentials.
+
+[openshell.gateway.otlp.agent]
+enabled  = true
+endpoint = "http://host.openshell.internal:4318"
+protocol = "http/protobuf"

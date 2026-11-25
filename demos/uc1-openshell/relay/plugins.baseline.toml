@@ -17,23 +17,19 @@ enabled = true
 
 [components.config]
 version = 4
-insecure_http_hosts = ["${MLFLOW_OTLP_HOST}"]
+insecure_http_hosts = ["192.0.0.8"]
 
 [components.config.opentelemetry]
 enabled = true
 
 [[components.config.opentelemetry.endpoints]]
 type = "openinference"
-endpoint = "${MLFLOW_OTLP_TRACES_ENDPOINT}"
+endpoint = "${OTEL_EXPORTER_OTLP_ENDPOINT}"
 transport = "http_binary"
 service_name = "customer-lookup-agent"
 service_version = "uc1-openshell"
 scheduled_delay_millis = 500
 timeout_millis = 10000
-
-[components.config.opentelemetry.endpoints.header_env]
-authorization = "MLFLOW_OTLP_AUTHORIZATION"
-"x-mlflow-experiment-id" = "MLFLOW_OTLP_EXPERIMENT_ID"
 
 [components.config.opentelemetry.endpoints.resource_attributes]
 "demo.use_case" = "uc1"

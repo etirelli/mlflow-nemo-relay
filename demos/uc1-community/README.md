@@ -10,7 +10,7 @@ This permutation uses **only upstream community components**, so one
 
 | Component | Version | Role |
 |---|---|---|
-| [NeMo Relay](https://github.com/NVIDIA/NeMo-Relay) (`nemo-relay[langgraph]`) | 0.11.0 | Agent runtime: managed tool/LLM execution, `pii_redaction` plugin, OTLP export |
+| [NeMo Relay](https://github.com/NVIDIA/NeMo-Relay) (`nemo-relay[langgraph]`) | 0.11.2 | Agent runtime: managed tool/LLM execution, `pii_redaction` plugin, OTLP export |
 | [LangGraph](https://github.com/langchain-ai/langgraph) / LangChain | 1.2 / 1.4 | The agent (`create_agent` with `NemoRelayMiddleware`) |
 | [MLflow](https://github.com/mlflow/mlflow) | 3.17.2 | Tracking server with basic auth and OTLP trace ingestion (`/v1/traces`) |
 | Any OpenAI-compatible LLM | — | Ollama (default), vLLM, NVIDIA NIM / build.nvidia.com, OpenAI, or a built-in scripted model |
@@ -33,8 +33,15 @@ This permutation uses **only upstream community components**, so one
 4. **Before/after.** A second copy of the agent runs *without* redaction and
    writes to its own experiment, which shows the SSN leaking into telemetry
    about 90 times per trace.
-5. **Proof.** `make verify` reads everything back from MLflow and checks the
-   success criteria automatically (12 checks).
+5. **Keep the SSN from the LLM (opt-in).** Telemetry redaction doesn't stop
+   the LLM itself from receiving the SSN. Tick *Keep SSN from the LLM* in the
+   chat UI (or send `"protect_llm": true`), and two Relay request intercepts,
+   registered on that request's scope only, replace the SSN with a reference
+   such as `SSN_REF_1` before the model sees it and swap it back before the
+   tool runs. The LLM span in MLflow then shows the reference the model
+   received.
+6. **Proof.** `make verify` reads everything back from MLflow and checks the
+   success criteria automatically (13 checks).
 
 ## Quick start
 
@@ -53,7 +60,7 @@ make up
 # Option B: no LLM at all (deterministic scripted model, good for rehearsals)
 make up-scripted
 
-make demo                       # sends both scenarios to both agents, then verifies
+make demo                       # sends the scenarios to both agents, then verifies
 ```
 
 | URL | What |
@@ -67,6 +74,10 @@ API example:
 ```bash
 curl -s localhost:8000/api/chat -H 'content-type: application/json' \
   -d '{"message": "Please look up the customer with SSN 900-12-0001."}' | jq
+
+# Same lookup, with the SSN kept out of the LLM request as well
+curl -s localhost:8000/api/chat -H 'content-type: application/json' \
+  -d '{"message": "Please look up the customer with SSN 900-12-0001.", "protect_llm": true}' | jq
 ```
 
 Stop with `make down`. `make clean` also deletes the MLflow data.
@@ -104,6 +115,7 @@ uc1-community/
 │       ├── tools.py            # lookup_customer tool (echoes the SSN on purpose)
 │       ├── customer_db.py      # synthetic records + slow "legacy shard"
 │       ├── relay_runtime.py    # Relay activation, MLflow auth and experiment routing
+│       ├── llm_protection.py   # opt-in: Relay request intercepts keep the SSN out of the LLM request
 │       ├── app.py              # FastAPI: /api/chat, /api/info, chat UI
 │       ├── scripted_model.py   # offline stand-in for the LLM
 │       ├── scenarios.py        # `make scenarios`

@@ -17,6 +17,7 @@ from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from pydantic import BaseModel, Field
 
 from customer_lookup_agent.agent import build_agent
+from customer_lookup_agent.llm_protection import SsnVault, protect_scope
 from customer_lookup_agent.relay_runtime import configure_mlflow_routing, relay_activation
 from customer_lookup_agent.settings import get_settings
 
@@ -57,6 +58,8 @@ app.add_middleware(
 class ChatRequest(BaseModel):
     message: str = Field(..., min_length=1, max_length=4000)
     session_id: str | None = None
+    # Keep the SSN out of the LLM request as well as the telemetry (see llm_protection.py).
+    protect_llm: bool = False
 
 
 class ToolOutcome(BaseModel):
@@ -68,6 +71,7 @@ class ToolOutcome(BaseModel):
 class ChatResponse(BaseModel):
     reply: str
     relay_mode: str
+    llm_protection: bool
     tool_calls: list[ToolOutcome]
     duration_ms: int
     trace_id: str | None
@@ -113,8 +117,15 @@ async def chat(request: ChatRequest) -> ChatResponse:
         "customer-lookup-request",
         nemo_relay.ScopeType.Agent,
         input={"message": request.message},
-        metadata={"session.id": session_id, "demo.relay_mode": settings.relay_mode},
+        metadata={
+            "session.id": session_id,
+            "demo.relay_mode": settings.relay_mode,
+            "demo.llm_protection": "on" if request.protect_llm else "off",
+        },
     )
+    vault = SsnVault() if request.protect_llm else None
+    if vault is not None:
+        protect_scope(handle, vault)
     try:
         trace_id = nemo_relay.capture_traceparent().split("-")[1]
     except Exception:  # the trace id is informative only
@@ -140,11 +151,15 @@ async def chat(request: ChatRequest) -> ChatResponse:
         (str(m.content) for m in reversed(messages) if isinstance(m, AIMessage) and m.content),
         "(no reply)",
     )
+    if vault is not None:
+        # The model only saw references; the support engineer gets the real values.
+        reply = vault.detokenize(reply)
     nemo_relay.scope.pop(handle, output={"reply": reply}, metadata={"otel.status_code": "OK"})
     await nemo_relay.subscribers.flush_async()
     return ChatResponse(
         reply=reply,
         relay_mode=settings.relay_mode,
+        llm_protection=vault is not None,
         tool_calls=tool_calls,
         duration_ms=int((time.perf_counter() - started) * 1000),
         trace_id=trace_id,

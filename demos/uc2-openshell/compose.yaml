@@ -11,6 +11,9 @@
 #   mlflow-bootstrap  one-shot: agent service account, experiments, least-privilege grant
 #   payments          Synthetica payments service: refunds, credits, ledger     -> http://localhost:8090
 #                     (the sandbox may call only POST /v1/refunds)
+#   otel-collector    receives the agents' traces from the OpenShell agent trace relay and
+#                     forwards them to MLflow as the agent service account     -> :4318
+#                     (the sandbox has no MLflow credentials and no route to MLflow)
 
 name: uc2-openshell
 
@@ -75,6 +78,22 @@ services:
       interval: 5s
       timeout: 3s
       retries: 20
+    restart: unless-stopped
+
+  # `make infra` starts it after the bootstrap, with the trace experiment id it looks up.
+  otel-collector:
+    image: docker.io/otel/opentelemetry-collector-contrib:0.165.0
+    command: ["--config=/etc/otelcol/collector.yaml"]
+    environment:
+      AGENT_MLFLOW_USERNAME: ${AGENT_MLFLOW_USERNAME:-relay-agent}
+      AGENT_MLFLOW_PASSWORD: ${AGENT_MLFLOW_PASSWORD:-relay-agent-demo-password}
+      TRACE_EXPERIMENT_ID: ${TRACE_EXPERIMENT_ID:-}
+    ports:
+      # Published on all interfaces so the OpenShell supervisor can reach it at
+      # host.openshell.internal (openshell/gateway-agent-relay.toml). Use a firewall on shared networks.
+      - "${RELAY_COLLECTOR_PORT:-4318}:4318"
+    volumes:
+      - ./otel/collector.yaml:/etc/otelcol/collector.yaml:ro
     restart: unless-stopped
 
 volumes:

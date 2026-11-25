@@ -90,6 +90,18 @@ LangChain's `ChatOpenAI` drops it, so traces contain only reasoning *token
 counts*, never the reasoning text. If a future integration captures that text,
 it is a string leaf, and the regex profile would redact SSNs in it.
 
+## Keeping the SSN from the LLM (opt-in)
+
+Telemetry redaction leaves execution alone, so the LLM still receives the SSN.
+A chat request with `"protect_llm": true` (the *Keep SSN from the LLM*
+checkbox) registers two Relay request intercepts on that request's scope
+([`llm_protection.py`](../agent/src/customer_lookup_agent/llm_protection.py)):
+one replaces each SSN in the LLM request with a reference such as `SSN_REF_1`,
+the other swaps the real SSN back into the tool's arguments. The LLM span in
+MLflow records the reference the model received.
+[uc1-community](../../uc1-community/docs/architecture.md#keeping-the-ssn-from-the-llm-opt-in)
+shows the sequence.
+
 ## Two agents, one image
 
 `uc1-agent-redacted` and `uc1-agent-baseline` share the image, the service
