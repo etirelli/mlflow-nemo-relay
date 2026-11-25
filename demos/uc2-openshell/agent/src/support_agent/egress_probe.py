@@ -6,7 +6,9 @@ Each target is ``METHOD URL``. Prints one line per target, ``BLOCKED: ...`` or
 ``ALLOWED: ...``. It uses the same interpreter as the agent, so the same policy
 rules apply. Nothing is sent that could move money: the credit request has an
 invalid body (amount 0), so even if it got through, the service would reject it
-with HTTP 400 and the probe would report ALLOWED.
+with HTTP 400 and the probe would report ALLOWED. MLflow is probed too: the
+agent's traces leave through the OpenShell agent trace relay, so the agent
+itself has no route to MLflow.
 """
 
 from __future__ import annotations
@@ -17,10 +19,12 @@ import sys
 import httpx
 
 PAYMENTS = os.environ.get("PAYMENTS_URL", "http://host.openshell.internal:8090").rstrip("/")
+MLFLOW = os.environ.get("MLFLOW_PROBE_URL", "http://host.openshell.internal:5000").rstrip("/")
 DEFAULT_TARGETS = [
     "GET https://pypi.org/simple/",
     f"POST {PAYMENTS}/v1/credits",
     f"GET {PAYMENTS}/v1/ledger",
+    f"POST {MLFLOW}/v1/traces",
 ]
 
 

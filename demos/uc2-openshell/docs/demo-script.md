@@ -24,7 +24,8 @@ Open:
 > "Same support agent as before, same $500 refund policy in NeMo Relay. What's
 > new: both agent versions run inside NVIDIA OpenShell sandboxes. The sandbox
 > policy lets the agent call exactly one payments API, `POST /v1/refunds`, plus
-> MLflow and the LLM. Nothing else: no internet, no ledger, no credits API.
+> the LLM. Nothing else: no internet, no ledger, no credits API, not even MLflow.
+> Traces leave through OpenShell's agent trace relay instead.
 > And the LLM key isn't even in the sandbox. OpenShell injects it on the way out."
 
 Show `openshell/policy.yaml`, the `payments_refunds` rule.

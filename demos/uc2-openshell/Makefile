@@ -37,6 +37,8 @@ AGENT_MLFLOW_PASSWORD ?= relay-agent-demo-password
 TRACE_EXPERIMENT := uc2-openshell-refund-agent
 # How the sandboxed agents reach the laptop (through the OpenShell supervisor).
 SANDBOX_HOST ?= host.openshell.internal
+# Where the OpenShell agent trace relay forwards the agents' traces (openshell/gateway-agent-relay.toml).
+RELAY_COLLECTOR_PORT ?= 4318
 
 # LLM: provider (default; endpoint from .env, key held by an OpenShell provider) | scripted
 LLM ?= $(if $(filter scripted,$(LLM_PROVIDER)),scripted,provider)
@@ -53,10 +55,21 @@ endif
 
 EVIDENCE_DIR := $(CURDIR)/telemetry
 UV_RUN := cd agent && uv run --quiet
+# Written by `make infra`: the MLflow experiment id the collector and the UI links use.
+EXPERIMENTS_ENV := $(EVIDENCE_DIR)/experiments.env
+
+# $(call experiment_id,<name>): print an MLflow experiment id, looked up as the MLflow admin.
+experiment_id = curl -fsS -u admin:$(MLFLOW_ADMIN_PASSWORD) \
+  "http://localhost:$(MLFLOW_PORT)/api/2.0/mlflow/experiments/get-by-name?experiment_name=$(1)" \
+  | python3 -c 'import json, sys; print(json.load(sys.stdin)["experiment"]["experiment_id"])'
+
+# OpenShell's relay sets OTEL_EXPORTER_OTLP_ENDPOINT, where the Relay policy file exports.
+# With it set, Relay would also add its automatic exporter and export every span twice.
+RELAY_AUTO_EXPORT_OFF := --env OTEL_TRACES_EXPORTER=none --env OTEL_LOGS_EXPORTER=none --env OTEL_METRICS_EXPORTER=none
 
 # $(call create_sandbox,<name>,<agent version>,<port>)
-# Note: --env values are visible to `openshell sandbox get`; the MLflow service
-# account password is demo-only (see OSH-5 in the repo's docs/product-gaps.md).
+# The sandboxes get no MLflow credentials and no route to MLflow: Relay exports
+# through the OpenShell agent trace relay, and the collector holds the credentials.
 define create_sandbox
 	-@$(OPENSHELL) forward stop $(3) $(1) >/dev/null 2>&1
 	-@$(OPENSHELL) sandbox delete $(1) >/dev/null 2>&1
@@ -64,18 +77,16 @@ define create_sandbox
 	@for i in $$(seq 1 60); do $(OPENSHELL) sandbox get $(1) >/dev/null 2>&1 || exit 0; sleep 1; done; \
 	  echo "sandbox $(1) still exists after 60s"; exit 1
 	$(OPENSHELL) sandbox create --name $(1) --from $(AGENT_IMAGE) --policy $(POLICY) --detach \
-	  --no-auto-providers $(LLM_ENV) \
+	  --no-auto-providers $(LLM_ENV) $(RELAY_AUTO_EXPORT_OFF) \
 	  --env SANDBOX_NAME=$(1) \
 	  --env AGENT_VERSION=$(2) \
 	  --env POLICY_VERSION=$(POLICY_VERSION) \
 	  --env REFUND_LIMIT=$(REFUND_LIMIT) \
 	  --env RELAY_PLUGINS_FILE=/app/relay/plugins.toml \
 	  --env PAYMENTS_URL=http://$(SANDBOX_HOST):$(PAYMENTS_PORT) \
-	  --env MLFLOW_TRACKING_URI=http://$(SANDBOX_HOST):$(MLFLOW_PORT) \
 	  --env MLFLOW_PUBLIC_URI=http://localhost:$(MLFLOW_PORT) \
 	  --env MLFLOW_EXPERIMENT_NAME=$(TRACE_EXPERIMENT) \
-	  --env MLFLOW_TRACKING_USERNAME=$(AGENT_MLFLOW_USERNAME) \
-	  --env MLFLOW_TRACKING_PASSWORD=$(AGENT_MLFLOW_PASSWORD) \
+	  --env MLFLOW_EXPERIMENT_ID=$$(sed -n 's/^TRACE_EXPERIMENT_ID=//p' $(EXPERIMENTS_ENV)) \
 	  --env TOOL_TIMEOUT_SECONDS=$(or $(TOOL_TIMEOUT_SECONDS),2.0) \
 	  --env PUBLIC_V1_AGENT_URL=http://localhost:$(V1_AGENT_PORT) \
 	  --env PUBLIC_V2_AGENT_URL=http://localhost:$(V2_AGENT_PORT) \
@@ -83,6 +94,18 @@ define create_sandbox
 	@mkdir -p $(EVIDENCE_DIR)
 	@# The detached forward inherits stdout/stderr; redirect so it does not hold the caller's pipe open.
 	$(OPENSHELL) forward start $(3) $(1) -d </dev/null >$(EVIDENCE_DIR)/forward-$(1).log 2>&1
+endef
+
+# $(call relay_check,<sandbox>): fail fast unless the OpenShell agent trace relay serves the sandbox.
+# OpenShell sets OTEL_EXPORTER_OTLP_ENDPOINT in sandbox processes only while the relay is on.
+define relay_check
+	@ep=""; for i in $$(seq 1 30); do \
+	  out=$$($(OPENSHELL) sandbox exec -n $(1) -- sh -c 'echo "relay=$$OTEL_EXPORTER_OTLP_ENDPOINT"' 2>/dev/null | grep '^relay=') \
+	    && { ep=$${out#relay=}; break; }; sleep 1; done; \
+	if [ -z "$$ep" ]; then \
+	  echo "$(1): the OpenShell agent trace relay is off (no OTEL_EXPORTER_OTLP_ENDPOINT in the sandbox)."; \
+	  echo "Enable it once on the gateway: make gateway-config"; exit 1; fi; \
+	echo "$(1): traces leave through the OpenShell agent trace relay at $$ep"
 endef
 
 # $(call wait_agent,<port>)
@@ -93,7 +116,7 @@ define wait_agent
 endef
 
 .PHONY: help check infra image provider provider-reset sandboxes up up-scripted scenarios eval evidence verify demo \
-        probe deny-log policy-show ledger logs term ps down clean test lint
+        probe deny-log policy-show ledger logs collector-logs gateway-config term ps down clean test lint
 
 help: ## Show targets
 	@grep -E '^[a-z-]+:.*##' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*## "}{printf "  %-13s %s\n", $$1, $$2}'
@@ -102,9 +125,14 @@ check: ## Check the OpenShell gateway and lint the sandbox policy
 	$(OPENSHELL) status
 	$(OPENSHELL_PROVER) check --boundary $(POLICY) $(POLICY)
 
-infra: ## Start MLflow and the payments service (compose), run the MLflow bootstrap
+infra: ## Start MLflow, the payments service and the trace collector (compose), run the MLflow bootstrap
 	$(COMPOSE) up -d --build mlflow payments
 	$(COMPOSE) run --rm mlflow-bootstrap
+	@mkdir -p $(EVIDENCE_DIR)
+	@id=$$($(call experiment_id,$(TRACE_EXPERIMENT))) && test -n "$$id" \
+	  && echo "TRACE_EXPERIMENT_ID=$$id" > $(EXPERIMENTS_ENV) \
+	  && echo "MLflow experiment $(TRACE_EXPERIMENT) has id $$id"
+	set -a && . $(EXPERIMENTS_ENV) && set +a && $(COMPOSE) up -d otel-collector
 
 image: ## Build the agent sandbox image with the gateway's container engine
 	$(ENGINE) build -t $(AGENT_IMAGE) -f agent/Containerfile .
@@ -137,6 +165,8 @@ provider-reset: ## Delete the LLM provider and its profile, then register them a
 sandboxes: ## (Re)create both agent sandboxes and forward their ports
 	$(call create_sandbox,$(V1_SANDBOX),v1,$(V1_AGENT_PORT))
 	$(call create_sandbox,$(V2_SANDBOX),v2,$(V2_AGENT_PORT))
+	$(call relay_check,$(V1_SANDBOX))
+	$(call relay_check,$(V2_SANDBOX))
 	$(call wait_agent,$(V1_AGENT_PORT))
 	$(call wait_agent,$(V2_AGENT_PORT))
 
@@ -195,6 +225,17 @@ ledger: ## Show the payments ledger (every money movement that actually executed
 
 logs: ## Show the v1 agent sandbox logs (gateway + sandbox sources)
 	$(OPENSHELL) logs $(V1_SANDBOX) --since 30m --source all
+
+collector-logs: ## Follow the trace collector (between the OpenShell relay and MLflow)
+	$(COMPOSE) logs -f otel-collector
+
+gateway-config: ## Print the one-time OpenShell gateway setting that turns on the agent trace relay
+	@echo "Add this to the OpenShell gateway config, restart the gateway, then run: make sandboxes"
+	@echo "(file locations and restart commands: openshell/gateway-agent-relay.toml)"
+	@echo "A new file must start with:  [openshell]  version = 2"
+	@echo
+	@sed -n '/^\[openshell.gateway.otlp.agent\]/,$$p' openshell/gateway-agent-relay.toml \
+	  | sed 's/:4318"/:$(RELAY_COLLECTOR_PORT)"/'
 
 term: ## OpenShell TUI: live sandbox activity, including action=deny events
 	$(OPENSHELL) term

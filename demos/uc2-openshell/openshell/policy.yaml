@@ -22,6 +22,10 @@
 # openshell/providers/ (rendered from .env by `make provider`), which adds its
 # own endpoint rule and injects the API key outside the sandbox.
 #
+# MLflow is NOT in this file either. The agents' traces leave through the
+# OpenShell agent trace relay, a gateway setting (openshell/gateway-agent-relay.toml),
+# so the agent process has no network route to MLflow and no MLflow credentials.
+#
 # filesystem_policy, landlock and process apply at sandbox start.
 # network_policies are live: `openshell policy set` / `policy update` hot-reloads them.
 
@@ -63,26 +67,4 @@ network_policies:
               path: /v1/refunds
     binaries:
       # Scripts run as their interpreter; list the real path, not a symlink.
-      - path: /usr/local/bin/python3.12
-
-  # MLflow on the laptop, published by compose on port 5000.
-  # The agent may export traces and resolve its experiment, nothing else.
-  mlflow_tracking:
-    name: mlflow-otlp-export
-    endpoints:
-      - host: host.openshell.internal
-        port: 5000
-        protocol: rest
-        enforcement: enforce
-        rules:
-          - allow:
-              method: POST
-              path: /v1/traces
-          - allow:
-              method: GET
-              path: /api/2.0/mlflow/experiments/get-by-name
-          - allow:
-              method: POST
-              path: /api/2.0/mlflow/experiments/create
-    binaries:
       - path: /usr/local/bin/python3.12

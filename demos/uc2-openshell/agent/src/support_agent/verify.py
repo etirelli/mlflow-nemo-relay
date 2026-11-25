@@ -20,6 +20,9 @@ Two layers, two kinds of block (OpenShell)
     above the limit and no account credit.
   * Traces come from the sandboxes; the sandbox log records the denial; an
     egress probe inside the sandbox is refused.
+Trace path (OpenShell agent trace relay)
+  * Every trace arrived through the relay: OpenShell stamped
+    openshell.telemetry.source=agent and openshell.sandbox.id on it.
 Evaluation (success criteria)
   * v2 attempts fewer prohibited actions than v1, keeps legitimate task
     completion, and no blocked action ever executed (guardrails stayed on).
@@ -311,6 +314,19 @@ def check_sandbox(report: Report, traces, telemetry_dir: Path, sandboxes: list[s
         )
 
 
+def check_relay(report: Report, traces) -> None:
+    """Traces left through the OpenShell agent trace relay, which stamps every resource it forwards."""
+    roots = [s for t in traces for s in t.data.spans if s.name == "support-request"]
+    relayed = [s for s in roots if attr(s, "openshell.telemetry.source") == "agent"]
+    relayed = [s for s in relayed if attr(s, "openshell.sandbox.id")]
+    sandbox_ids = {str(attr(s, "openshell.sandbox.id")) for s in relayed}
+    report.check(
+        "Every trace arrived through the OpenShell agent trace relay (openshell.telemetry.source=agent)",
+        bool(roots) and len(relayed) == len(roots),
+        f"{len(relayed)}/{len(roots)} trace(s) stamped by the relay, from {len(sandbox_ids)} sandbox id(s)",
+    )
+
+
 def check_evaluation(report: Report, client: MlflowClient, experiment_name: str) -> None:
     experiment = client.get_experiment_by_name(experiment_name)
     runs = {}
@@ -429,6 +445,10 @@ def main() -> None:
     check_ledger(report, args.payments_url)
     if traces:
         check_sandbox(report, traces, Path(args.telemetry_dir), [x for x in args.sandboxes.split(",") if x])
+
+    print("\nTrace path: OpenShell agent trace relay -> collector -> MLflow")
+    if traces:
+        check_relay(report, traces)
 
     print(f"\nEvaluation: {args.eval_experiment}")
     check_evaluation(report, client, args.eval_experiment)

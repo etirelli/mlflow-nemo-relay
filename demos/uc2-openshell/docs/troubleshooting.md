@@ -24,9 +24,9 @@ gateway can find it.
 ## The agent never gets ready ("timed out (see: make logs)")
 
 - `make logs` shows the sandbox's own output. A Python traceback during
-  startup usually means MLflow wasn't reachable: check `make ps` (MLflow
-  healthy?) and `make deny-log` for a denied `host.openshell.internal:5000`.
-- If you changed `MLFLOW_PORT` or `PAYMENTS_PORT`, also change the ports in
+  startup that names `OTEL_EXPORTER_OTLP_ENDPOINT` means the OpenShell agent
+  trace relay is off: see `make gateway-config`.
+- If you changed `PAYMENTS_PORT`, also change the port in
   `openshell/policy.yaml`. The policy names ports explicitly.
 
 ## The LLM call fails inside the sandbox
@@ -54,7 +54,7 @@ always tries.
 The host isn't in the policy at all, so OpenShell refuses at TCP level without
 an HTTP answer (see `uc1-openshell`). Only hosts with an L7 rule
 (`protocol: rest`, `enforcement: enforce`) get the readable `403
-policy_denied` body. Here that's the payments service and MLflow.
+policy_denied` body. Here that's the payments service.
 
 ## `make verify`: "The OpenShell sandbox log records the denied POST /v1/credits" fails
 
