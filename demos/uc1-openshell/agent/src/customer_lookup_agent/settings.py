@@ -35,14 +35,13 @@ class Settings:
         default_factory=lambda: _env("RELAY_PLUGINS_FILE", "/app/relay/plugins.redacted.toml")
     )
 
-    mlflow_tracking_uri: str = field(
-        default_factory=lambda: _env("MLFLOW_TRACKING_URI", "http://host.openshell.internal:5000")
-    )
-    # Browser-facing MLflow URL used for links in the chat UI.
+    # The agent never talks to MLflow: its traces leave through the OpenShell agent
+    # trace relay, and the collector routes them. These only build UI links.
     mlflow_public_uri: str = field(default_factory=lambda: _env("MLFLOW_PUBLIC_URI", "http://localhost:5000"))
     mlflow_experiment_name: str = field(
         default_factory=lambda: _env("MLFLOW_EXPERIMENT_NAME", "uc1-openshell-redacted")
     )
+    mlflow_experiment_id: str = field(default_factory=lambda: _env("MLFLOW_EXPERIMENT_ID", ""))
 
     tool_timeout_seconds: float = field(default_factory=lambda: float(_env("TOOL_TIMEOUT_SECONDS", "2.0")))
 

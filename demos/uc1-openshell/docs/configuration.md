@@ -85,16 +85,11 @@ Things to know:
 | `TOOL_TIMEOUT_SECONDS` | `2.0` | Lookup timeout. The "legacy shard" customer takes 30 s. |
 | `PARTNER_CRM_URL` | `https://partner-crm.example.com/v1/customers/notify` | Where `notify_partner_crm` posts. Not allowed by the policy. |
 | `RELAY_MODE` / `RELAY_PLUGINS_FILE` | per sandbox | `redacted` / `baseline` and the matching Relay TOML |
-| `MLFLOW_TRACKING_URI` | `http://host.openshell.internal:5000` | MLflow as seen from inside the sandbox. The OTLP endpoint is `<uri>/v1/traces`. |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | set by OpenShell | The agent trace relay (`http://192.0.0.8:4318`), where Relay exports |
+| `OTEL_TRACES_EXPORTER` / `_LOGS_` / `_METRICS_EXPORTER` | `none` | Turns off Relay's automatic exporter, which would export every span a second time |
 | `MLFLOW_PUBLIC_URI` | `http://localhost:5000` | Browser-facing MLflow URL, used for links |
-| `MLFLOW_EXPERIMENT_NAME` | `uc1-openshell-<mode>` | Resolved to an id at startup |
-| `MLFLOW_TRACKING_USERNAME` / `_PASSWORD` | `relay-agent` / demo password | MLflow service account (see the note below) |
+| `MLFLOW_EXPERIMENT_NAME` / `MLFLOW_EXPERIMENT_ID` | `uc1-openshell-<mode>` / from `make infra` | For UI links. The collector routes the traces. |
 | `RELAY_TELEMETRY_DIR` | `/sandbox/telemetry` | Relay ATOF file sink. `make evidence` copies it out. |
-
-> **Note on `--env`:** OpenShell treats `--env` values as non-secret
-> configuration. The MLflow service-account password is demo-only. See
-> OSH-5 in the [product gaps report](../../../docs/product-gaps.md#nvidia-openshell) for the
-> options to remove it from the sandbox.
 
 ### Makefile / `.env`
 
@@ -106,7 +101,7 @@ Things to know:
 | `POLICY` | `openshell/policy.yaml` |
 | `REDACTED_SANDBOX` / `BASELINE_SANDBOX` | `uc1-agent-redacted` / `uc1-agent-baseline` |
 | `REDACTED_AGENT_PORT` / `BASELINE_AGENT_PORT` / `MLFLOW_PORT` | `8000` / `8001` / `5000` |
-| `SANDBOX_MLFLOW_URI` | `http://host.openshell.internal:$(MLFLOW_PORT)` |
+| `RELAY_COLLECTOR_PORT` | `4318`: the collector the relay forwards to (match it in the gateway setting) |
 | `MLFLOW_ADMIN_PASSWORD`, `MLFLOW_SECRET_KEY`, `AGENT_MLFLOW_USERNAME`, `AGENT_MLFLOW_PASSWORD` | demo values, as in `uc1-community` |
 
 ## The Relay policy files
@@ -127,8 +122,8 @@ differences are the resource attributes:
 ## Running without OpenShell
 
 The image and the code still run outside a sandbox, which is useful for
-debugging. Run the agent with `uvicorn` and point `MLFLOW_TRACKING_URI` at
-`http://localhost:5000`. `notify_partner_crm` then fails with a DNS error
+debugging. Run the agent with `uvicorn` and set `OTEL_EXPORTER_OTLP_ENDPOINT` to
+`http://localhost:4318`, the collector, and the three exporter switches to `none`. `notify_partner_crm` then fails with a DNS error
 instead of a policy denial. It is still reported as `EgressBlocked`, but
 `make deny-log` has nothing to show.
 

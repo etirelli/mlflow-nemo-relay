@@ -1,0 +1,76 @@
+# OpenTelemetry Collector between the OpenShell agent trace relay and MLflow.
+#
+# The relay (gateway setting: openshell/gateway-agent-relay.toml) forwards the
+# agents' OTLP traces here, with openshell.sandbox.id stamped on each resource.
+# The collector adds the MLflow service account and the experiment header, so
+# no MLflow credential or route exists inside the sandboxes. It also retries
+# failed exports, which the relay does not (one attempt per batch).
+#
+# The relay sends every sandbox's traces to one place, so the collector routes
+# them: demo.relay_mode (a Relay resource attribute) picks the experiment.
+#
+# Environment (set by the Makefile and compose): AGENT_MLFLOW_USERNAME,
+# AGENT_MLFLOW_PASSWORD, REDACTED_EXPERIMENT_ID, BASELINE_EXPERIMENT_ID.
+
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  # MLflow keeps span attributes; copy the relay's attribution onto every span.
+  transform/relay-attribution:
+    error_mode: ignore
+    trace_statements:
+      - context: span
+        statements:
+          - set(attributes["openshell.sandbox.id"], resource.attributes["openshell.sandbox.id"]) where resource.attributes["openshell.sandbox.id"] != nil
+          - set(attributes["openshell.telemetry.source"], resource.attributes["openshell.telemetry.source"]) where resource.attributes["openshell.telemetry.source"] != nil
+  batch: {}
+
+connectors:
+  routing/relay-mode:
+    default_pipelines: [traces/redacted]
+    table:
+      - context: resource
+        condition: attributes["demo.relay_mode"] == "baseline"
+        pipelines: [traces/baseline]
+
+extensions:
+  basicauth/mlflow:
+    client_auth:
+      username: ${env:AGENT_MLFLOW_USERNAME}
+      password: ${env:AGENT_MLFLOW_PASSWORD}
+
+exporters:
+  otlp_http/redacted:
+    endpoint: http://mlflow:5000
+    compression: none
+    auth:
+      authenticator: basicauth/mlflow
+    headers:
+      x-mlflow-experiment-id: ${env:REDACTED_EXPERIMENT_ID}
+  otlp_http/baseline:
+    endpoint: http://mlflow:5000
+    compression: none
+    auth:
+      authenticator: basicauth/mlflow
+    headers:
+      x-mlflow-experiment-id: ${env:BASELINE_EXPERIMENT_ID}
+
+service:
+  extensions: [basicauth/mlflow]
+  pipelines:
+    traces/in:
+      receivers: [otlp]
+      processors: [transform/relay-attribution]
+      exporters: [routing/relay-mode]
+    traces/redacted:
+      receivers: [routing/relay-mode]
+      processors: [batch]
+      exporters: [otlp_http/redacted]
+    traces/baseline:
+      receivers: [routing/relay-mode]
+      processors: [batch]
+      exporters: [otlp_http/baseline]

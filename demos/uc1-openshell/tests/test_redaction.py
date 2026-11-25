@@ -78,13 +78,6 @@ async def test_tool_outcomes_and_parentage_survive_export(otlp_receiver):
         assert chain[-1] == "customer-lookup-request", chain
 
 
-async def test_export_is_authenticated_and_routed(otlp_receiver):
-    await run_scenarios("redacted")
-    headers = otlp_receiver.requests[0]["headers"]
-    assert headers["authorization"].startswith("Basic ")
-    assert headers["x-mlflow-experiment-id"] == "42"
-
-
 async def test_baseline_control_leaks_ssn(otlp_receiver):
     """Without the pii_redaction component, the same run leaks the SSN, so the checks above mean something."""
     await run_scenarios("baseline")

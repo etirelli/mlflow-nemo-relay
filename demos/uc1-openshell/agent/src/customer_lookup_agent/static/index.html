@@ -44,6 +44,8 @@
   .toggle button { border: 0; background: transparent; color: var(--text); padding: 6px 14px; cursor: pointer; font: inherit; }
   .toggle button[aria-pressed="true"].redacted { background: var(--ok-bg); color: var(--ok); font-weight: 600; }
   .toggle button[aria-pressed="true"].baseline { background: var(--warn-bg); color: var(--warn); font-weight: 600; }
+  .protect { display: inline-flex; align-items: center; gap: 6px; font-size: 0.85rem; cursor: pointer; }
+  .protect input { accent-color: var(--brand); }
   .meta { color: var(--muted); font-size: 0.85rem; }
   .meta a { color: inherit; }
 
@@ -77,6 +79,7 @@
   .tool.success { background: var(--ok-bg); color: var(--ok); }
   .tool.error { background: var(--danger-bg); color: var(--danger); }
   .tool.blocked { background: var(--warn-bg); color: var(--warn); font-weight: 600; }
+  .tool.protect { background: var(--user); color: var(--brand); }
   .msg .foot { font-size: 0.8rem; color: var(--muted); margin-top: 6px; }
   .msg .foot a { color: inherit; }
   .dots::after { content: "…"; animation: blink 1.2s infinite; }
@@ -129,6 +132,9 @@
         <button class="baseline" data-mode="baseline" aria-pressed="false">Baseline (no redaction)</button>
       </div>
     </div>
+    <label class="protect" title="NeMo Relay request intercepts replace the SSN with a reference before the LLM sees it; the tool still gets the real value">
+      <input type="checkbox" id="protect-llm"> Keep SSN from the LLM
+    </label>
     <div class="meta" id="meta">connecting&hellip;</div>
   </div>
 
@@ -155,8 +161,9 @@
   </section>
 
   <p class="note">The chat shows real values because the support engineer is entitled to them.
-    NeMo Relay redacts only the <em>telemetry</em> exported to MLflow. The OpenShell sandbox decides where the agent
-    may connect: MLflow and the LLM, nothing else. Open the trace links to compare the two modes.</p>
+    NeMo Relay redacts the <em>telemetry</em> exported to MLflow, and with <em>Keep SSN from the LLM</em> on it also
+    replaces the SSN in the LLM request. The OpenShell sandbox decides where the agent may connect: MLflow and the
+    LLM, nothing else. Open the trace links to compare the two modes.</p>
 </main>
 <script>
   const state = { mode: "redacted", agents: { redacted: location.origin, baseline: location.origin }, info: {}, busy: false };
@@ -214,11 +221,12 @@
     const pending = add("agent", `<div class="who">agent &middot; ${esc(state.mode)}</div><span class="meta dots">thinking</span>`);
     try {
       const r = await fetch(state.agents[state.mode] + "/api/chat", {
-        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ message }),
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ message, protect_llm: $("#protect-llm").checked }),
       });
       const body = await r.json();
       if (!r.ok) throw new Error(body.detail || r.statusText);
-      const tools = body.tool_calls.map((t) => {
+      const tools = (body.llm_protection ? `<span class="tool protect">SSN kept from the LLM</span>` : "") + body.tool_calls.map((t) => {
         const blocked = t.status === "error" && t.content.includes("EgressBlocked");
         const cls = blocked ? "blocked" : (t.status === "error" ? "error" : "success");
         return `<span class="tool ${cls}">${esc(t.name)}: ${blocked ? "blocked by OpenShell policy" : esc(t.status)}</span>`;

@@ -6,16 +6,18 @@ LangGraph agent runs inside an **NVIDIA OpenShell** sandbox.
 - **NeMo Relay** controls *what the telemetry contains*. It redacts the SSN
   from every span before export.
 - **OpenShell** controls *where the agent can connect and what it can touch*.
-  It allows MLflow and the LLM, and nothing else.
+  It allows the LLM, and nothing else: the traces leave through OpenShell's
+  agent trace relay.
 - **MLflow** shows the evidence: tool outcomes, timing, and errors, including
   the connection the sandbox refused.
 
 | Component | Version | Role |
 |---|---|---|
-| [NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell) | 0.1.9 | Sandbox runtime: Landlock filesystem rules, a policy-enforced egress proxy (L7 for HTTP), credential injection through providers |
+| [NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell) | 0.1.9 | Sandbox runtime: Landlock filesystem rules, a policy-enforced egress proxy (L7 for HTTP), credential injection through providers, the agent trace relay |
 | [NeMo Relay](https://github.com/NVIDIA/NeMo-Relay) (`nemo-relay[langgraph]`) | 0.11.2 | Agent runtime: managed tool/LLM execution, `pii_redaction` plugin, OTLP export |
 | [LangGraph](https://github.com/langchain-ai/langgraph) / LangChain | 1.2 / 1.4 | The agent (`create_agent` with `NemoRelayMiddleware`) |
 | [MLflow](https://github.com/mlflow/mlflow) | 3.17.2 | Tracking server with basic auth and OTLP trace ingestion (`/v1/traces`), run in compose outside the sandbox |
+| [OpenTelemetry Collector](https://github.com/open-telemetry/opentelemetry-collector-contrib) (contrib) | 0.165.0 | Receives the traces from the OpenShell relay, adds the MLflow service account, routes each Relay mode to its experiment |
 | Any OpenAI-compatible LLM | — | Native Ollama (default), build.nvidia.com through an OpenShell provider, or the built-in scripted model |
 
 > **Status:** validated end to end on 2026-11-23. Setup: OpenShell 0.1.9 with
@@ -24,6 +26,12 @@ LangGraph agent runs inside an **NVIDIA OpenShell** sandbox.
 > 16/16, and `make test` passes 8 offline tests. Docker Desktop and colima
 > have not been tried. Findings are in the consolidated
 > [product gaps report](../../docs/product-gaps.md#nvidia-openshell).
+>
+> **Update:** since that run, traces leave through the OpenShell agent trace
+> relay instead of a direct export to MLflow, and requests can opt in to
+> keeping the SSN from the LLM. Validated again on 2026-11-24 with OpenShell
+> 0.1.9 (Docker driver) and the scripted model: `make demo` passes 18/18,
+> and `make test` passes 10 offline tests.
 
 ## What the demo shows
 
@@ -32,9 +40,10 @@ LangGraph agent runs inside an **NVIDIA OpenShell** sandbox.
    (success), then one on a slow "legacy shard" (a controlled **timeout**).
 2. **Sanitize and export.** Relay's `pii_redaction` plugin replaces the SSN with
    `[REDACTED-SSN]` before the OTLP exporter sees the data. The export leaves
-   the sandbox through OpenShell's egress proxy. The sandbox policy allows the
-   agent's Python process to make only `POST /v1/traces` and the experiment
-   lookup on MLflow.
+   the sandbox through OpenShell's **agent trace relay**: the supervisor stamps
+   `openshell.sandbox.id` on it and forwards it to the collector, which adds the
+   MLflow credentials and routes it to the experiment of its Relay mode. The
+   agent has no network route to MLflow and holds no MLflow credentials.
 3. **Block an exfiltration path.** You ask the agent to *"sync the record to
    the partner CRM"*. The agent calls `notify_partner_crm`, and the sandbox
    refuses the connection to `partner-crm.example.com` before any data leaves.
@@ -46,9 +55,15 @@ LangGraph agent runs inside an **NVIDIA OpenShell** sandbox.
    `demo.sandbox = uc1-agent-redacted`.
 5. **Before/after.** A second sandbox, `uc1-agent-baseline`, runs the same
    image and policy without redaction, and its traces leak the SSN.
-6. **Proof.** `make verify` collects evidence from the sandbox: the Relay ATOF
+6. **Keep the SSN from the LLM (opt-in).** Tick *Keep SSN from the LLM* in the
+   chat UI (or send `"protect_llm": true`): two Relay request intercepts,
+   registered on that request's scope only, replace the SSN with a reference
+   such as `SSN_REF_1` before the model sees it and swap it back before the
+   tool runs. The LLM span in MLflow then shows the reference the model
+   received.
+7. **Proof.** `make verify` collects evidence from the sandbox: the Relay ATOF
    file, the OpenShell deny log, and an egress probe. It then checks the UC1
-   success criteria plus the sandbox criteria, 16 checks in all.
+   success criteria plus the sandbox criteria, 18 checks in all.
 
 ## Quick start
 
@@ -60,6 +75,8 @@ Prerequisites:
   or **Docker** (Docker Desktop is the macOS runtime OpenShell qualifies; not tried
   here). It must be the same engine the gateway uses; pin it with
   `compute_driver` in `~/.config/openshell/gateway.toml`.
+- **The OpenShell agent trace relay**, turned on once in the gateway config
+  (`make gateway-config` prints the setting and where it goes).
 - **uv**, for scenarios, verify and tests.
 - Optionally, a local LLM.
 
@@ -79,7 +96,7 @@ make up-scripted
 export NVIDIA_API_KEY=nvapi-...
 make provider-nvidia && make up LLM=nvidia
 
-make demo                         # scenarios + evidence + 16 checks
+make demo                         # scenarios + evidence + 18 checks
 ```
 
 | URL / command | What |
@@ -88,7 +105,8 @@ make demo                         # scenarios + evidence + 16 checks
 | http://localhost:8001 | Baseline agent, forwarded from sandbox `uc1-agent-baseline` |
 | http://localhost:5000 | MLflow UI. Log in as `admin` / `mlflow-admin-demo-password` |
 | `make deny-log` | Connections the OpenShell policy denied |
-| `make probe` | Run an egress probe inside the sandbox (PyPI, partner CRM) |
+| `make probe` | Run an egress probe inside the sandbox (PyPI, partner CRM, MLflow) |
+| `make collector-logs` | The collector between the OpenShell relay and MLflow |
 | `make policy-show` | The effective sandbox policy |
 | `make term` | OpenShell TUI, with live `action=deny` events |
 
@@ -110,24 +128,27 @@ collected evidence.
 
 ```
 uc1-openshell/
-├── compose.yaml            # mlflow, mlflow-bootstrap, (ollama). The agents are NOT here.
+├── compose.yaml            # mlflow, mlflow-bootstrap, otel-collector, (ollama). The agents are NOT here.
 ├── Makefile                # up / up-scripted / demo / verify / evidence / deny-log / down / test
 ├── .env.example
 ├── openshell/
-│   ├── policy.yaml             # sandbox policy: filesystem + L7 egress allow-list
+│   ├── policy.yaml             # sandbox policy: filesystem + L7 egress allow-list (no MLflow route)
+│   ├── gateway-agent-relay.toml  # one-time gateway setting: the agent trace relay (`make gateway-config`)
 │   └── providers/nvidia-build.yaml   # optional provider: build.nvidia.com with key injection
 ├── relay/
-│   ├── plugins.redacted.toml   # Relay policy: OTLP→MLflow + pii_redaction
+│   ├── plugins.redacted.toml   # Relay policy: OTLP→OpenShell agent trace relay + pii_redaction
 │   └── plugins.baseline.toml   # same exporters, no redaction
+├── otel/collector.yaml     # collector: relay -> MLflow, service account, one experiment per Relay mode
 ├── mlflow/                 # upstream MLflow with basic auth + bootstrap
 ├── agent/
 │   ├── Containerfile           # OpenShell sandbox image (non-root, /sandbox workspace)
 │   └── src/customer_lookup_agent/
 │       ├── tools.py            # lookup_customer + notify_partner_crm (the egress the sandbox blocks)
 │       ├── egress_probe.py     # run inside the sandbox: `make probe`
+│       ├── llm_protection.py   # opt-in: Relay request intercepts keep the SSN out of the LLM request
 │       ├── verify.py           # `make verify`
 │       └── …                   # agent, app, relay_runtime, scripted model, scenarios, UI
-├── tests/                  # offline pytest suite, including a simulated OpenShell denial
+├── tests/                  # offline pytest suite, including a simulated OpenShell denial and trace relay
 └── docs/
 ```
 
@@ -136,9 +157,9 @@ uc1-openshell/
 | | uc1-community | uc1-openshell |
 |---|---|---|
 | Where the agent runs | compose container, on the compose network | OpenShell sandbox (networking off, egress only through the supervisor) |
-| How the agent reaches MLflow | `http://mlflow:5000` | `http://host.openshell.internal:5000`, L7-restricted to `POST /v1/traces` and experiment lookup |
+| How the traces reach MLflow | Relay exports to `http://mlflow:5000` with the service account | Through the OpenShell agent trace relay to the collector, which adds the service account; the agent has no route to MLflow |
 | LLM credentials | `LLM_API_KEY` env var | Optional OpenShell provider; the sandbox sees only a placeholder |
 | Extra tool | — | `notify_partner_crm`, blocked by policy |
 | Scenarios / verify | run in a compose container | run on the laptop with `uv`; evidence pulled out with `openshell sandbox exec` / `logs` |
 | Experiments | `uc1-customer-lookup-*` | `uc1-openshell-*` |
-| Checks | 12 | 16 |
+| Checks | 13 | 18 |

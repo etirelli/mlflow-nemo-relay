@@ -5,7 +5,7 @@
 | Layer | Question it answers | Mechanism in this demo |
 |---|---|---|
 | **NeMo Relay** | What may the agent's *telemetry* contain? | `pii_redaction` sanitize guardrails on every lifecycle event, before any exporter |
-| **OpenShell** | Where may the agent *process* connect, and what may it read or write? | Sandbox with networking off. Egress goes only through the supervisor, which enforces `openshell/policy.yaml` (L7 for HTTP). Landlock filesystem rules apply too. |
+| **OpenShell** | Where may the agent *process* connect, and what may it read or write? | Sandbox with networking off. Egress goes only through the supervisor, which enforces `openshell/policy.yaml` (L7 for HTTP). Landlock filesystem rules apply too. Traces leave through the supervisor's agent trace relay, not through an egress rule. |
 | **MLflow** | What happened, and why? | Traces with tool status, timing, and readable (sanitized) errors, including denied egress |
 
 Relay protects the data in the evidence. OpenShell protects the data in
@@ -13,8 +13,8 @@ execution. Neither one replaces the other:
 
 - With Relay alone, a buggy or prompt-injected tool can still send a customer
   record to an arbitrary host. Telemetry stays clean while the data leaves.
-- With OpenShell alone, the SSN still lands in the trace store, because MLflow
-  is an *allowed* destination.
+- With OpenShell alone, the SSN still lands in the trace store, because the
+  trace path to MLflow is *allowed*.
 
 ## Components and data flow
 
@@ -28,19 +28,21 @@ flowchart LR
         agent_graph -->|"lookup_customer<br/>ssn=900-12-0001"| tool["Synthetic records<br/>+ slow legacy shard"]
         agent_graph -->|"notify_partner_crm"| crm["httpx POST<br/>partner-crm.example.com"]
         agent_graph -. "events (raw)" .-> pii["Relay pii_redaction"]
-        pii -. "sanitized" .-> otel["OTLP exporter"]
+        pii -. "sanitized" .-> otel["OTLP exporter<br/>to 192.0.0.8:4318"]
         pii -. "sanitized" .-> atof["ATOF file<br/>/sandbox/telemetry"]
     end
 
     subgraph sup["OpenShell supervisor (trusted side)"]
         proxy{{"policy engine<br/>+ egress proxy"}}
+        relay["agent trace relay<br/>stamps openshell.sandbox.id"]
     end
 
     agent_graph -->|"LLM call"| proxy
-    otel -->|"POST /v1/traces"| proxy
+    otel -->|"OTLP"| relay
     crm -->|"CONNECT :443"| proxy
     proxy -->|"allow: POST /v1/chat/completions"| llm[("Ollama on laptop<br/>host.openshell.internal:11434")]
-    proxy -->|"allow: POST /v1/traces<br/>GET experiments/get-by-name"| mlflow["MLflow (compose)<br/>host.openshell.internal:5000"]
+    relay -->|"host.openshell.internal:4318"| collector["otel-collector (compose)<br/>service account,<br/>experiment by Relay mode"]
+    collector -->|"POST /v1/traces"| mlflow["MLflow (compose)"]
     proxy -->|"DENY 403 policy_denied"| x(("partner CRM<br/>(never reached)"))
     mlflow --> ui["MLflow UI"]
 ```
@@ -61,12 +63,12 @@ agent runs, and a trusted **supervisor**:
   - A request to an allowed host but a disallowed method or path gets an HTTP
     `403` with a JSON body, for example
     `{"error":"policy_denied","policy":"local_llm","rule":"POST /api/pull",…}`.
-  - Allowed requests are logged as well, for example
-    `HTTP:POST [INFO] ALLOWED POST http://host.openshell.internal:5000/v1/traces [policy:mlflow_tracking engine:l7]`.
+  - Allowed requests are logged as well (`HTTP:POST [INFO] ALLOWED …`).
 - **Binary identity.** Rules name the executable that opens the connection.
   Scripts run as their interpreter, so the policy lists
   `/usr/local/bin/python3.12`, the real path in `python:3.12-slim`. Relay's
-  exporter runs inside the same Python process, so it uses the same rule.
+  exporter needs no rule: it talks only to the agent trace relay, which the
+  supervisor serves inside the sandbox boundary.
 - **Filesystem.** Landlock restricts the workload to read-only system and
   application paths (`/usr`, `/lib`, `/etc`, `/app`, …) plus read-write
   `/sandbox` and `/tmp`. Relay writes its ATOF copy to `/sandbox/telemetry`
@@ -82,14 +84,14 @@ agent runs, and a trusted **supervisor**:
 
 | Rule | Endpoint | Allowed | Why |
 |---|---|---|---|
-| `mlflow_tracking` | `host.openshell.internal:5000` (REST, enforce) | `POST /v1/traces`, `GET /api/2.0/mlflow/experiments/get-by-name`, `POST /api/2.0/mlflow/experiments/create` | Export traces and resolve the experiment id. The agent cannot read other traces, download artifacts, or call admin APIs, even with valid credentials. |
 | `local_llm` | `host.openshell.internal:11434` (REST, enforce) | `POST /v1/chat/completions`, `GET /v1/models` | The default LLM. Ollama's model management API (`/api/pull`, `/api/delete`, …) stays unreachable. |
 | provider `uc1-nvidia-build` (optional) | `integrate.api.nvidia.com:443` | read-write | Hosted LLM, with endpoint-bound credential injection |
-| *(everything else)* | | denied | Includes `partner-crm.example.com`, PyPI, and any other internet host |
+| *(everything else)* | | denied | Includes `partner-crm.example.com`, PyPI, MLflow, and any other internet host |
 
-The two layers enforce authorization independently. MLflow basic auth gives the
-service account EDIT on two experiments only. The OpenShell L7 rules further
-restrict *which MLflow APIs* the process can call at all.
+There is no MLflow rule: the agent process can't call MLflow at all, and it
+holds no MLflow credentials. The collector, outside the sandbox, holds the
+service account, and MLflow basic auth gives that account EDIT on the two
+demo experiments only.
 
 ## Trace structure in MLflow
 
@@ -111,14 +113,18 @@ prohibited action.
 
 ## Authentication and routing
 
-This works as in `uc1-community`: MLflow basic auth, a least-privilege service
-account, and routing by `x-mlflow-experiment-id` through Relay's
-`header_env`. Two things differ:
+MLflow uses basic auth and a least-privilege service account, and routes by
+`x-mlflow-experiment-id`, as in `uc1-community`. The difference is who sends
+them: the collector ([`otel/collector.yaml`](../otel/collector.yaml)), not the
+agent.
 
-- Relay's `insecure_http_hosts` allows `host.openshell.internal`, which is
-  derived from `MLFLOW_TRACKING_URI`, instead of `mlflow`.
-- MLflow's `--allowed-hosts` includes `host.openshell.internal`, because that
-  is the `Host` header the sandboxed agent sends.
+- The collector authenticates as the service account (the `basicauth`
+  extension) and picks the experiment from Relay's `demo.relay_mode` resource
+  attribute: `baseline` goes to `uc1-openshell-baseline`, everything else to
+  `uc1-openshell-redacted`. `make infra` looks both experiment ids up after
+  the bootstrap and passes them to the collector.
+- Relay's `insecure_http_hosts` allows the relay address, `192.0.0.8`. The
+  supervisor serves it inside the sandbox boundary.
 
 ## Two sandboxes, one image, one policy
 
@@ -126,16 +132,46 @@ account, and routing by `x-mlflow-experiment-id` through Relay's
 `openshell/policy.yaml`. They differ only in `RELAY_PLUGINS_FILE`,
 `MLFLOW_EXPERIMENT_NAME`, and the loopback port. The before/after comparison
 still isolates the Relay policy as the only variable. It also shows that
-OpenShell does **not** stop the SSN from reaching MLflow, because MLflow is
-an allowed destination. Telemetry content is Relay's job.
+OpenShell does **not** stop the SSN from reaching MLflow, because the trace
+path to MLflow is allowed. Telemetry content is Relay's job.
 
-## Alternative: OpenShell's agent trace relay
+## The trace path: OpenShell agent trace relay
 
 OpenShell 0.1.7 and later can relay OTLP from the sandbox to a collector that
-is configured on the gateway (`[openshell.gateway.otlp.agent]`). In that mode
-the sandbox gets `OTEL_EXPORTER_OTLP_ENDPOINT=http://192.0.0.8:4318`, needs no
-egress rule, and the **MLflow credential lives in the gateway config instead
-of the agent**. We did not use it here because headers are configured per
-gateway. Both sandboxes would then write to one experiment, and the
-redacted/baseline split would be lost. It is a strong option for the RHOAI
-permutation. See OSH-5 in the [product gaps report](../../../docs/product-gaps.md#nvidia-openshell).
+is configured on the gateway (`[openshell.gateway.otlp.agent]`, a one-time
+setting in [`openshell/gateway-agent-relay.toml`](../openshell/gateway-agent-relay.toml),
+printed by `make gateway-config`). The sandbox then gets
+`OTEL_EXPORTER_OTLP_ENDPOINT=http://192.0.0.8:4318`, an address the supervisor
+serves inside the sandbox boundary:
+
+1. The Relay policy file exports to that address
+   (`endpoint = "${OTEL_EXPORTER_OTLP_ENDPOINT}"`). `make sandboxes` also sets
+   `OTEL_TRACES_EXPORTER=none`, plus the logs and metrics equivalents: with an
+   endpoint variable set, Relay would otherwise add its automatic `gen_ai`
+   exporter and export every span twice. The compression setting OpenShell
+   injects (`none`) needs Relay 0.11.1 or later
+   ([REL-16](../../../docs/product-gaps.md#nemo-relay)).
+2. The supervisor stamps `openshell.sandbox.id` and
+   `openshell.telemetry.source=agent` on each resource, replacing whatever the
+   agent set, and forwards the batch to the collector at
+   `host.openshell.internal:4318`.
+3. The collector copies those two attributes onto every span, adds the service
+   account and the experiment header, and exports to MLflow. It retries failed
+   exports; the relay makes one attempt per batch.
+
+The relay's own headers are set once per gateway, so on their own they would
+send both sandboxes' traces to one experiment and lose the redacted/baseline
+split. Routing in the collector, by `demo.relay_mode`, keeps the split, and
+keeps the gateway setting the same for every demo and free of secrets.
+
+## Keeping the SSN from the LLM (opt-in)
+
+Telemetry redaction leaves execution alone, so the LLM still receives the SSN.
+A chat request with `"protect_llm": true` (the *Keep SSN from the LLM*
+checkbox) registers two Relay request intercepts on that request's scope
+([`llm_protection.py`](../agent/src/customer_lookup_agent/llm_protection.py)):
+one replaces each SSN in the LLM request with a reference such as `SSN_REF_1`,
+the other swaps the real SSN back into the tool's arguments. The LLM span in
+MLflow records the reference the model received.
+[uc1-community](../../uc1-community/docs/architecture.md#keeping-the-ssn-from-the-llm-opt-in)
+shows the sequence.

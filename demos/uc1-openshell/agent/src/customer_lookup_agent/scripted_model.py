@@ -5,6 +5,8 @@ requests one ``lookup_customer`` call, and then summarizes the tool result.
 If the user asks to sync the customer with the partner CRM, it follows a
 successful lookup with a ``notify_partner_crm`` call, which the OpenShell
 sandbox policy blocks.
+With LLM protection on, it sees an SSN reference (``SSN_REF_1``) instead and
+passes that to the tool, as a real model would.
 Use it with ``LLM_PROVIDER=scripted`` when no LLM endpoint is available.
 """
 
@@ -20,7 +22,7 @@ from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
 
-SSN_RE = re.compile(r"\b\d{3}-?\d{2}-?\d{4}\b")
+SSN_RE = re.compile(r"\b\d{3}-?\d{2}-?\d{4}\b|\bSSN_REF_\d+\b")
 CRM_RE = re.compile(r"\b(partner|crm)\b", re.IGNORECASE)
 
 

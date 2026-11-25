@@ -3,12 +3,15 @@
 #   docker compose up -d --build        (the Makefile runs this for you: `make up`)
 #
 # The agents do NOT run in compose. They run inside NVIDIA OpenShell sandboxes
-# (see Makefile targets `sandboxes` and openshell/policy.yaml) and reach MLflow
-# through the sandbox's policy-enforced egress at host.openshell.internal:5000.
+# (see Makefile targets `sandboxes` and openshell/policy.yaml). Their traces leave
+# through the OpenShell agent trace relay, which forwards them to otel-collector.
 #
 # Services
 #   mlflow            MLflow tracking server with basic auth and OTLP ingestion  -> http://localhost:5000
 #   mlflow-bootstrap  one-shot: creates the agent service account, experiments, and permissions
+#   otel-collector    receives the agents' traces from the OpenShell agent trace relay and
+#                     forwards them to MLflow as the agent service account, routed by Relay mode -> :4318
+#                     (the sandboxes have no MLflow credentials and no route to MLflow)
 #   ollama            optional local LLM (profile "ollama")
 
 name: uc1-openshell
@@ -58,6 +61,23 @@ services:
       REDACTED_EXPERIMENT: uc1-openshell-redacted
       BASELINE_EXPERIMENT: uc1-openshell-baseline
     restart: "no"
+
+  # `make infra` starts it after the bootstrap, with the experiment ids it looks up.
+  otel-collector:
+    image: docker.io/otel/opentelemetry-collector-contrib:0.165.0
+    command: ["--config=/etc/otelcol/collector.yaml"]
+    environment:
+      AGENT_MLFLOW_USERNAME: ${AGENT_MLFLOW_USERNAME:-relay-agent}
+      AGENT_MLFLOW_PASSWORD: ${AGENT_MLFLOW_PASSWORD:-relay-agent-demo-password}
+      REDACTED_EXPERIMENT_ID: ${REDACTED_EXPERIMENT_ID:-}
+      BASELINE_EXPERIMENT_ID: ${BASELINE_EXPERIMENT_ID:-}
+    ports:
+      # Published on all interfaces so the OpenShell supervisor can reach it at
+      # host.openshell.internal (openshell/gateway-agent-relay.toml). Use a firewall on shared networks.
+      - "${RELAY_COLLECTOR_PORT:-4318}:4318"
+    volumes:
+      - ./otel/collector.yaml:/etc/otelcol/collector.yaml:ro
+    restart: unless-stopped
 
   # Optional containerized LLM. On macOS, a native Ollama install is much faster
   # (containers have no GPU access there). See docs/configuration.md.

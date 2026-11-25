@@ -11,7 +11,7 @@ happened, without the sensitive data.*
 cd demos/uc1-openshell
 openshell status                 # gateway is up
 make clean && make up            # or: make up-scripted (no LLM, fully deterministic)
-make demo                        # warms everything up; expect "16/16 checks passed"
+make demo                        # warms everything up; expect "18/18 checks passed"
 ```
 
 Open four tabs or windows:
@@ -45,9 +45,9 @@ Show `openshell/policy.yaml`:
 
 > "The agent runs in an NVIDIA OpenShell sandbox with networking turned off.
 > The only way out is the OpenShell supervisor, and this policy says the
-> agent's Python process may call exactly two things: MLflow, and only the
-> trace export and experiment lookup APIs, and the LLM's chat completions
-> endpoint. Everything else is denied."
+> agent's Python process may call exactly one thing: the LLM's chat
+> completions endpoint. Traces leave through OpenShell's agent trace relay,
+> so not even MLflow is reachable. Everything else is denied."
 
 ## 3. Run a lookup (60 s)
 

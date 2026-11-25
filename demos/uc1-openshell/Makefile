@@ -31,8 +31,8 @@ MLFLOW_PORT ?= 5000
 MLFLOW_ADMIN_PASSWORD ?= mlflow-admin-demo-password
 AGENT_MLFLOW_USERNAME ?= relay-agent
 AGENT_MLFLOW_PASSWORD ?= relay-agent-demo-password
-# How the sandboxed agents reach MLflow (through the OpenShell supervisor).
-SANDBOX_MLFLOW_URI ?= http://host.openshell.internal:$(MLFLOW_PORT)
+# Where the OpenShell agent trace relay forwards the agents' traces (openshell/gateway-agent-relay.toml).
+RELAY_COLLECTOR_PORT ?= 4318
 
 # LLM: ollama (default, native Ollama on the laptop) | scripted | nvidia
 LLM ?= ollama
@@ -54,11 +54,21 @@ endif
 
 EVIDENCE_DIR := $(CURDIR)/telemetry
 UV_RUN := cd agent && uv run --quiet
+# Written by `make infra`: the MLflow experiment ids the collector and the UI links use.
+EXPERIMENTS_ENV := $(EVIDENCE_DIR)/experiments.env
+
+# $(call experiment_id,<name>): print an MLflow experiment id, looked up as the MLflow admin.
+experiment_id = curl -fsS -u admin:$(MLFLOW_ADMIN_PASSWORD) \
+  "http://localhost:$(MLFLOW_PORT)/api/2.0/mlflow/experiments/get-by-name?experiment_name=$(1)" \
+  | python3 -c 'import json, sys; print(json.load(sys.stdin)["experiment"]["experiment_id"])'
+
+# OpenShell's relay sets OTEL_EXPORTER_OTLP_ENDPOINT, where the Relay policy file exports.
+# With it set, Relay would also add its automatic exporter and export every span twice.
+RELAY_AUTO_EXPORT_OFF := --env OTEL_TRACES_EXPORTER=none --env OTEL_LOGS_EXPORTER=none --env OTEL_METRICS_EXPORTER=none
 
 # $(call create_sandbox,<name>,<mode>,<port>)
-# Note: --env values are visible to `openshell sandbox get`; the MLflow service
-# account password is demo-only. See OSH-5 in the repo's docs/product-gaps.md for
-# the provider-based alternative.
+# The sandboxes get no MLflow credentials and no route to MLflow: Relay exports
+# through the OpenShell agent trace relay, and the collector holds the credentials.
 define create_sandbox
 	-@$(OPENSHELL) forward stop $(3) $(1) >/dev/null 2>&1
 	-@$(OPENSHELL) sandbox delete $(1) >/dev/null 2>&1
@@ -66,15 +76,13 @@ define create_sandbox
 	@for i in $$(seq 1 60); do $(OPENSHELL) sandbox get $(1) >/dev/null 2>&1 || exit 0; sleep 1; done; \
 	  echo "sandbox $(1) still exists after 60s"; exit 1
 	$(OPENSHELL) sandbox create --name $(1) --from $(AGENT_IMAGE) --policy $(POLICY) --detach \
-	  $(LLM_ENV) \
+	  $(LLM_ENV) $(RELAY_AUTO_EXPORT_OFF) \
 	  --env SANDBOX_NAME=$(1) \
 	  --env RELAY_MODE=$(2) \
 	  --env RELAY_PLUGINS_FILE=/app/relay/plugins.$(2).toml \
-	  --env MLFLOW_TRACKING_URI=$(SANDBOX_MLFLOW_URI) \
 	  --env MLFLOW_PUBLIC_URI=http://localhost:$(MLFLOW_PORT) \
 	  --env MLFLOW_EXPERIMENT_NAME=uc1-openshell-$(2) \
-	  --env MLFLOW_TRACKING_USERNAME=$(AGENT_MLFLOW_USERNAME) \
-	  --env MLFLOW_TRACKING_PASSWORD=$(AGENT_MLFLOW_PASSWORD) \
+	  --env MLFLOW_EXPERIMENT_ID=$$(sed -n 's/^$(shell echo $(2) | tr a-z A-Z)_EXPERIMENT_ID=//p' $(EXPERIMENTS_ENV)) \
 	  --env TOOL_TIMEOUT_SECONDS=$(or $(TOOL_TIMEOUT_SECONDS),2.0) \
 	  --env PUBLIC_REDACTED_AGENT_URL=http://localhost:$(REDACTED_AGENT_PORT) \
 	  --env PUBLIC_BASELINE_AGENT_URL=http://localhost:$(BASELINE_AGENT_PORT) \
@@ -82,6 +90,18 @@ define create_sandbox
 	@mkdir -p $(EVIDENCE_DIR)
 	@# The detached forward inherits stdout/stderr; redirect so it does not hold the caller's pipe open.
 	$(OPENSHELL) forward start $(3) $(1) -d </dev/null >$(EVIDENCE_DIR)/forward-$(1).log 2>&1
+endef
+
+# $(call relay_check,<sandbox>): fail fast unless the OpenShell agent trace relay serves the sandbox.
+# OpenShell sets OTEL_EXPORTER_OTLP_ENDPOINT in sandbox processes only while the relay is on.
+define relay_check
+	@ep=""; for i in $$(seq 1 30); do \
+	  out=$$($(OPENSHELL) sandbox exec -n $(1) -- sh -c 'echo "relay=$$OTEL_EXPORTER_OTLP_ENDPOINT"' 2>/dev/null | grep '^relay=') \
+	    && { ep=$${out#relay=}; break; }; sleep 1; done; \
+	if [ -z "$$ep" ]; then \
+	  echo "$(1): the OpenShell agent trace relay is off (no OTEL_EXPORTER_OTLP_ENDPOINT in the sandbox)."; \
+	  echo "Enable it once on the gateway: make gateway-config"; exit 1; fi; \
+	echo "$(1): traces leave through the OpenShell agent trace relay at $$ep"
 endef
 
 # $(call wait_agent,<port>)
@@ -92,7 +112,8 @@ define wait_agent
 endef
 
 .PHONY: help check infra image sandboxes up up-scripted up-ollama provider-nvidia pull-model \
-        scenarios evidence verify demo probe deny-log policy-show logs term ps atof down clean test lint
+        scenarios evidence verify demo probe deny-log policy-show logs collector-logs gateway-config term ps atof \
+        down clean test lint
 
 help: ## Show targets
 	@grep -E '^[a-z-]+:.*##' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*## "}{printf "  %-16s %s\n", $$1, $$2}'
@@ -101,9 +122,15 @@ check: ## Check the OpenShell gateway and lint the sandbox policy
 	$(OPENSHELL) status
 	$(OPENSHELL_PROVER) check --boundary $(POLICY) $(POLICY)
 
-infra: ## Start MLflow (compose) and run its one-shot bootstrap
+infra: ## Start MLflow and the trace collector (compose), and run MLflow's one-shot bootstrap
 	$(COMPOSE) up -d --build mlflow
 	$(COMPOSE) run --rm mlflow-bootstrap
+	@mkdir -p $(EVIDENCE_DIR)
+	@red=$$($(call experiment_id,uc1-openshell-redacted)) && base=$$($(call experiment_id,uc1-openshell-baseline)) \
+	  && test -n "$$red" && test -n "$$base" \
+	  && printf 'REDACTED_EXPERIMENT_ID=%s\nBASELINE_EXPERIMENT_ID=%s\n' "$$red" "$$base" > $(EXPERIMENTS_ENV) \
+	  && echo "MLflow experiments: uc1-openshell-redacted has id $$red, uc1-openshell-baseline has id $$base"
+	set -a && . $(EXPERIMENTS_ENV) && set +a && $(COMPOSE) up -d otel-collector
 
 image: ## Build the agent sandbox image with the gateway's container engine
 	$(ENGINE) build -t $(AGENT_IMAGE) -f agent/Containerfile .
@@ -111,6 +138,8 @@ image: ## Build the agent sandbox image with the gateway's container engine
 sandboxes: ## (Re)create both agent sandboxes and forward their ports
 	$(call create_sandbox,$(REDACTED_SANDBOX),redacted,$(REDACTED_AGENT_PORT))
 	$(call create_sandbox,$(BASELINE_SANDBOX),baseline,$(BASELINE_AGENT_PORT))
+	$(call relay_check,$(REDACTED_SANDBOX))
+	$(call relay_check,$(BASELINE_SANDBOX))
 	$(call wait_agent,$(REDACTED_AGENT_PORT))
 	$(call wait_agent,$(BASELINE_AGENT_PORT))
 
@@ -152,11 +181,12 @@ verify: evidence ## Check the success criteria against MLflow and the sandbox ev
 	cd agent && MLFLOW_TRACKING_URI=http://localhost:$(MLFLOW_PORT) \
 	  MLFLOW_TRACKING_USERNAME=admin MLFLOW_TRACKING_PASSWORD=$(MLFLOW_ADMIN_PASSWORD) \
 	  EVIDENCE_DIR=$(EVIDENCE_DIR) REDACTED_SANDBOX=$(REDACTED_SANDBOX) MLFLOW_DISABLE_AGENT_HINT=1 \
+	  MLFLOW_DISABLE_AGENT_HINT=1 \
 	  uv run --quiet python -m customer_lookup_agent.verify
 
 demo: scenarios verify ## Run the scenarios, then verify
 
-probe: ## Show that a process inside the sandbox cannot reach the internet
+probe: ## Show that a process inside the sandbox cannot reach the internet or MLflow
 	-$(OPENSHELL) sandbox exec -n $(REDACTED_SANDBOX) -- python -m customer_lookup_agent.egress_probe
 
 deny-log: ## Show the connections the OpenShell policy denied (last 30 minutes)
@@ -167,6 +197,17 @@ policy-show: ## Show the effective sandbox policy (base policy + provider rules)
 
 logs: ## Show the agent sandbox logs (gateway + sandbox sources)
 	$(OPENSHELL) logs $(REDACTED_SANDBOX) --since 30m --source all
+
+collector-logs: ## Follow the trace collector (between the OpenShell relay and MLflow)
+	$(COMPOSE) logs -f otel-collector
+
+gateway-config: ## Print the one-time OpenShell gateway setting that turns on the agent trace relay
+	@echo "Add this to the OpenShell gateway config, restart the gateway, then run: make sandboxes"
+	@echo "(file locations and restart commands: openshell/gateway-agent-relay.toml)"
+	@echo "A new file must start with:  [openshell]  version = 2"
+	@echo
+	@sed -n '/^\[openshell.gateway.otlp.agent\]/,$$p' openshell/gateway-agent-relay.toml \
+	  | sed 's/:4318"/:$(RELAY_COLLECTOR_PORT)"/'
 
 term: ## OpenShell TUI: live sandbox activity, including action=deny events
 	$(OPENSHELL) term
@@ -179,7 +220,7 @@ ps: ## Show sandboxes, forwards and compose services
 atof: evidence ## Print the redacted Relay ATOF event stream (copied out of the sandbox)
 	python3 -m json.tool --json-lines $(EVIDENCE_DIR)/atof-redacted.jsonl | less
 
-down: ## Delete the sandboxes and stop MLflow (keep MLflow data)
+down: ## Delete the sandboxes and stop MLflow and the collector (keep MLflow data)
 	-$(OPENSHELL) forward stop $(REDACTED_AGENT_PORT) $(REDACTED_SANDBOX)
 	-$(OPENSHELL) forward stop $(BASELINE_AGENT_PORT) $(BASELINE_SANDBOX)
 	-$(OPENSHELL) sandbox delete $(REDACTED_SANDBOX)

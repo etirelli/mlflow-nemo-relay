@@ -27,6 +27,11 @@ SCENARIOS = [
     ),
 ]
 
+# Sent with "protect_llm": true, so MLflow also shows a request whose SSN never reached the LLM.
+PROTECTED_SCENARIOS = [
+    ("successful lookup, SSN kept from the LLM", f"Please look up the customer with SSN {SUCCESS_SSN}."),
+]
+
 
 def default_agents() -> list[str]:
     raw = os.environ.get("DEMO_AGENT_URLS", "http://localhost:8000,http://localhost:8001")
@@ -40,14 +45,18 @@ def run(agent_url: str, client: httpx.Client) -> bool:
         f"\n=== {agent_url}  (sandbox={info.get('sandbox')}, relay_mode={info['relay_mode']}, "
         f"llm={info['llm_model']})"
     )
-    for label, message in SCENARIOS:
+    runs = [(label, message, False) for label, message in SCENARIOS]
+    runs += [(label, message, True) for label, message in PROTECTED_SCENARIOS]
+    for label, message, protect_llm in runs:
         print(f"\n--> {label}\n    user: {message}")
-        r = client.post(f"{agent_url}/api/chat", json={"message": message})
+        r = client.post(f"{agent_url}/api/chat", json={"message": message, "protect_llm": protect_llm})
         if r.status_code != 200:
             print(f"    !! HTTP {r.status_code}: {r.text}")
             ok = False
             continue
         body = r.json()
+        if body["llm_protection"]:
+            print("    (NeMo Relay replaced the SSN in the LLM request with a reference)")
         for call in body["tool_calls"]:
             print(f"    tool {call['name']}: status={call['status']}")
         if not body["tool_calls"]:

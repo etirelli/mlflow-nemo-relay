@@ -74,19 +74,9 @@ docker run --rm alpine uname -r     # needs 6.2 or later
 openshell logs uc1-agent-redacted --since 10m --source all
 ```
 
-- `Could not resolve MLflow experiment`, with `policy_denied` in the error: the
-  MLflow client called an API that `policy.yaml` does not allow. Look for the
-  denied method and path in `make deny-log` and add it to `mlflow_tracking`.
-  Then run `openshell policy set uc1-agent-redacted --policy openshell/policy.yaml --wait`,
-  which hot-reloads the policy.
-- `Could not resolve MLflow experiment`, with a connection error: MLflow is
-  not reachable at `host.openshell.internal:5000`. Check that `make infra`
-  succeeded, that compose publishes port 5000 on all interfaces, and that
-  `MLFLOW_ALLOWED_HOSTS` includes `host.openshell.internal` (MLflow answers
-  `400 Invalid Host header` otherwise).
-- A Relay activation error about an insecure endpoint:
-  `insecure_http_hosts` is derived from `MLFLOW_TRACKING_URI`. Use the
-  `host.openshell.internal` default, or HTTPS.
+- A traceback that names `OTEL_EXPORTER_OTLP_ENDPOINT`: the OpenShell agent
+  trace relay is off. Turn it on once (`make gateway-config`), then run
+  `make sandboxes`.
 - A permission error writing `/sandbox/telemetry` or `/tmp`: the filesystem
   policy was changed. Both must stay in `read_write`.
 
@@ -135,7 +125,7 @@ sets, because the forward connects to loopback in the sandbox.
 ## Traces don't show up in MLflow
 
 - Relay batches spans and exports them within about 0.5 s. Refresh the Traces view.
-- Check the sandbox log for exporter warnings and for denials of `POST /v1/traces`.
+- Check `make collector-logs` for export errors between the relay and MLflow.
 - Look at the right experiment: `uc1-openshell-redacted` or `…-baseline`.
 
 ## MLflow keeps restarting / `exit 137`
